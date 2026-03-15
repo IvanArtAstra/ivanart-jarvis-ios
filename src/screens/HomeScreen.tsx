@@ -2,7 +2,7 @@
  * HomeScreen v3 — с Always-On режимом и wake word индикатором
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,9 @@ import {
   SafeAreaView,
   Animated,
   Switch,
+  Modal,
 } from 'react-native';
+import { SettingsScreen } from './SettingsScreen';
 import { useJarvis, AppState, ListenMode } from '../hooks/useJarvis';
 
 const STATE_LABELS: Record<AppState, string> = {
@@ -59,6 +61,7 @@ export const HomeScreen = () => {
     disconnectGlasses,
   } = useJarvis();
 
+  const [showSettings, setShowSettings] = useState(false);
   const pulseAnim = React.useRef(new Animated.Value(1)).current;
   const waveAnim = React.useRef(new Animated.Value(0)).current;
   const isActive = !['idle', 'error'].includes(appState);
@@ -107,9 +110,19 @@ export const HomeScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
 
+      {/* Settings Modal */}
+      <Modal visible={showSettings} animationType="slide" presentationStyle="fullScreen">
+        <SettingsScreen onClose={() => setShowSettings(false)} />
+      </Modal>
+
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>IvanArt × Jarvis</Text>
+        <View style={styles.headerTopRow}>
+          <Text style={styles.title}>IvanArt × Jarvis</Text>
+          <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.settingsBtn}>
+            <Text style={styles.settingsIcon}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
         <View style={styles.headerRow}>
           <Text style={styles.subtitle}>Два разума, одни очки ⚡</Text>
           {sessionCount > 0 && (
@@ -409,4 +422,14 @@ const styles = StyleSheet.create({
   },
   alwaysOnIcon: { fontSize: 32 },
   alwaysOnLabel: { color: '#6B7280', fontSize: 14 },
+
+  // Header extras
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+  },
+  settingsBtn: { padding: 6 },
+  settingsIcon: { fontSize: 22 },
 });

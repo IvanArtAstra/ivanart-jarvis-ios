@@ -10,6 +10,7 @@
  */
 
 import { agentBridgeService } from './agentBridgeService';
+import { appControlService } from './appControlService';
 
 export interface ParsedCommand {
   type: 'agent_command' | 'normal_chat';
@@ -136,6 +137,16 @@ export class CommandParserService {
       } catch {
         return null;
       }
+    }
+
+    // ─── Управление iOS приложениями ──────────────────────────────────
+    const appResult = await appControlService.handleCommand(lower);
+    if (appResult) {
+      return {
+        type: 'agent_command',
+        action: 'open_app',
+        response: appResult,
+      };
     }
 
     // Не команда — передать в Claude
