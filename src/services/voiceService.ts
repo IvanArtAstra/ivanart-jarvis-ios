@@ -5,6 +5,7 @@
 
 import { Platform, PermissionsAndroid } from 'react-native';
 import Voice, { SpeechResultsEvent, SpeechErrorEvent } from '@react-native-voice/voice';
+// Package: @react-native-voice/voice (npm)
 import { ANTHROPIC_API_KEY } from '../utils/config';
 
 type VoiceCallback = (text: string) => void;
