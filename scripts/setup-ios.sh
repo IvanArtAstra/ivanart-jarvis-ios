@@ -27,8 +27,9 @@ if [ -d "$TEMP_APP" ]; then
   rm -rf "$TEMP_APP"
 fi
 
-npx react-native@0.73.0 init IvanArtJarvisTemp \
-  --pm npm
+npx @react-native-community/cli@latest init IvanArtJarvisTemp \
+  --pm npm \
+  --version 0.73.0
 
 echo -e "${GREEN}  ✓ Нативный проект создан${NC}"
 
