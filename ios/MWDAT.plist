@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>MWDAT</key>
+  <dict>
+    <key>MetaAppID</key>
+    <string>1261497052067859</string>
+    <key>ClientToken</key>
+    <string>AR|1261497052067859|02adee6bcb50f0e9f0468b6708550e7d</string>
+    <!-- Set your Apple Developer Team ID in Xcode → Signing & Capabilities -->
+    <key>TeamID</key>
+    <string>$(DEVELOPMENT_TEAM)</string>
+  </dict>
+</dict>
+</plist>
