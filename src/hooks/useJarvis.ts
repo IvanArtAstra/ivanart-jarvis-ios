@@ -14,6 +14,8 @@ import { bleService } from '../services/bleService';
 import { wakeWordService } from '../services/wakeWordService';
 import { backgroundService } from '../services/backgroundService';
 import { notificationService } from '../services/notificationService';
+import { agentBridgeService } from '../services/agentBridgeService';
+import { commandParserService } from '../services/commandParserService';
 
 export type AppState =
   | 'idle'          // ждём
@@ -32,6 +34,7 @@ interface JarvisState {
   lastResponse: string;
   partialText: string;        // текст в реальном времени при распознавании
   isGlassesConnected: boolean;
+  isBridgeConnected: boolean; // подключён ли Agent Bridge
   error: string | null;
   sessionCount: number;       // сколько раз поговорили за сессию
 }
@@ -44,6 +47,7 @@ export const useJarvis = () => {
     lastResponse: 'Jarvis готов. Скажи "Джарвис" или нажми кнопку.',
     partialText: '',
     isGlassesConnected: false,
+    isBridgeConnected: false,
     error: null,
     sessionCount: 0,
   });
@@ -63,12 +67,25 @@ export const useJarvis = () => {
     update({ lastQuery: transcript, appState: 'thinking', partialText: '' });
     notificationService.hapticResponse();
 
-    const response = await jarvisService.ask(transcript);
+    // 🔀 Роутинг: сначала проверяем агент-команды, потом Claude
+    let response: string;
+    const agentCmd = agentBridgeService.connected
+      ? await commandParserService.parse(transcript)
+      : null;
+
+    if (agentCmd?.response) {
+      // Команда агент-системы — мгновенный ответ без Claude
+      response = agentCmd.response;
+    } else {
+      // Обычный разговор — Claude API
+      response = await jarvisService.ask(transcript);
+    }
 
     update({
       lastResponse: response,
       appState: 'speaking',
       sessionCount: state.sessionCount + 1,
+      error: null,
     });
 
     // Отправить на очки если подключены
@@ -194,6 +211,27 @@ export const useJarvis = () => {
   }, []);
 
   // ─────────────────────────────────────────────
+  // Agent Bridge — подключение и пуш-уведомления
+  // ─────────────────────────────────────────────
+  useEffect(() => {
+    // Подключить Bridge
+    agentBridgeService.connect((connected) => {
+      update({ isBridgeConnected: connected });
+    });
+
+    // Пуш от агентов → голосом через очки
+    agentBridgeService.onAgentResult(async (data) => {
+      const preview = data.data?.preview ?? '';
+      const file = (data.data?.file ?? '') as string;
+      const agent = file.split('_')[0];
+      const msg = `${agent} завершил задачу. ${preview.slice(0, 80)}`;
+      notificationService.hapticResponse();
+      await ttsService.speak(msg);
+      update({ lastResponse: msg });
+    });
+  }, []);
+
+  // ─────────────────────────────────────────────
   // Cleanup
   // ─────────────────────────────────────────────
   useEffect(() => {
@@ -202,6 +240,7 @@ export const useJarvis = () => {
       wakeWordService.stop();
       backgroundService.stopKeepAlive();
       ttsService.stop();
+      agentBridgeService.disconnect();
     };
   }, []);
 
