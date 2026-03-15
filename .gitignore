@@ -1,0 +1,43 @@
+# React Native
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# iOS
+ios/build/
+ios/Pods/
+ios/*.xcworkspace
+ios/DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Android (на будущее)
+android/app/debug
+android/app/release
+android/.gradle
+android/build/
+
+# Environment
+.env
+.env.local
+.env.production
+*.env
+
+# Secrets
+config/secrets.js
+config/api-keys.js
+
+# Misc
+.DS_Store
+.watchmanconfig
+__pycache__/
+*.pyc
+.idea/
+.vscode/settings.json
+dist/
+build/
+
+# Logs
+logs/
+*.log
