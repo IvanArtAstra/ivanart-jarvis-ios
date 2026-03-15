@@ -1,9 +1,9 @@
 /**
- * HomeScreen — главный экран приложения
- * IvanArt × Jarvis
+ * HomeScreen v2 — использует useJarvis хук
+ * Полный цикл: Voice → Claude → TTS → Ray-Ban
  */
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -12,237 +12,265 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Animated,
+  useEffect,
+  useRef,
 } from 'react-native';
-import { bleService } from '../services/bleService';
-import { jarvisService } from '../services/jarvisService';
+import { useJarvis, AppState } from '../hooks/useJarvis';
 
-type ConnectionStatus = 'disconnected' | 'scanning' | 'connected';
-type ListeningStatus = 'idle' | 'listening' | 'processing';
+const STATE_LABELS: Record<AppState, string> = {
+  idle: 'Нажми и говори',
+  listening: 'Слушаю...',
+  thinking: 'Думаю...',
+  speaking: 'Отвечаю...',
+  error: 'Ошибка — попробуй снова',
+};
+
+const STATE_ICONS: Record<AppState, string> = {
+  idle: '🎙️',
+  listening: '🔴',
+  thinking: '🧠',
+  speaking: '🔊',
+  error: '⚠️',
+};
 
 export const HomeScreen = () => {
-  const [connection, setConnection] = useState<ConnectionStatus>('disconnected');
-  const [listening, setListening] = useState<ListeningStatus>('idle');
-  const [lastQuery, setLastQuery] = useState('');
-  const [lastResponse, setLastResponse] = useState('Jarvis готов к работе...');
-  const pulseAnim = new Animated.Value(1);
+  const {
+    appState,
+    lastQuery,
+    lastResponse,
+    isGlassesConnected,
+    error,
+    startVoiceInteraction,
+    stopListening,
+    connectGlasses,
+    disconnectGlasses,
+  } = useJarvis();
 
-  // Пульсация при прослушивании
-  useEffect(() => {
-    if (listening === 'listening') {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const isActive = appState !== 'idle' && appState !== 'error';
+
+  // Пульсация при активности
+  React.useEffect(() => {
+    if (isActive) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 600, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1.0, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.15, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.0, duration: 700, useNativeDriver: true }),
         ])
       ).start();
     } else {
-      pulseAnim.setValue(1);
+      Animated.spring(pulseAnim, { toValue: 1, useNativeDriver: true }).start();
     }
-  }, [listening]);
+  }, [isActive]);
 
-  const handleConnect = async () => {
-    setConnection('scanning');
-    try {
-      await bleService.scanForGlasses((device) => {
-        bleService.connect(device.id).then(() => {
-          setConnection('connected');
-          setLastResponse('Ray-Ban подключены ✓');
-        });
-      });
-    } catch {
-      setConnection('disconnected');
-      setLastResponse('Очки не найдены. Убедись что они включены.');
+  const handleVoiceButton = () => {
+    if (appState === 'listening') {
+      stopListening();
+    } else if (appState === 'idle') {
+      startVoiceInteraction();
     }
-  };
-
-  const handleVoicePress = () => {
-    if (listening !== 'idle') return;
-    setListening('listening');
-    // TODO: запустить Whisper/Voice recording
-    // Пример: VoiceService.start() -> onResult -> handleQuery
-  };
-
-  const handleQuery = async (text: string) => {
-    setLastQuery(text);
-    setListening('processing');
-    
-    const response = await jarvisService.ask(text);
-    setLastResponse(response);
-    
-    // Отправить ответ на очки (TTS через BLE)
-    if (bleService.isConnected()) {
-      await bleService.sendToGlasses(response);
-    }
-    
-    setListening('idle');
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Заголовок */}
+
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>IvanArt × Jarvis</Text>
         <Text style={styles.subtitle}>Два разума, одни очки ⚡</Text>
       </View>
 
-      {/* Статус очков */}
-      <View style={styles.statusCard}>
-        <View style={[styles.statusDot, 
-          connection === 'connected' ? styles.dotGreen : 
-          connection === 'scanning' ? styles.dotYellow : styles.dotRed
-        ]} />
-        <Text style={styles.statusText}>
-          {connection === 'connected' ? 'Ray-Ban подключены' :
-           connection === 'scanning' ? 'Поиск очков...' : 'Очки не подключены'}
-        </Text>
-        {connection === 'disconnected' && (
-          <TouchableOpacity style={styles.connectBtn} onPress={handleConnect}>
-            <Text style={styles.connectBtnText}>Подключить</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      {/* Статус Ray-Ban */}
+      <TouchableOpacity
+        style={styles.glassesCard}
+        onPress={isGlassesConnected ? disconnectGlasses : connectGlasses}
+        activeOpacity={0.8}
+      >
+        <View style={[styles.statusDot, isGlassesConnected ? styles.dotGreen : styles.dotRed]} />
+        <View style={styles.glassesInfo}>
+          <Text style={styles.glassesTitle}>
+            {isGlassesConnected ? '🕶️ Ray-Ban подключены' : '🕶️ Ray-Ban не подключены'}
+          </Text>
+          <Text style={styles.glassesSubtitle}>
+            {isGlassesConnected ? 'Ответы идут через очки' : 'Нажми чтобы подключить'}
+          </Text>
+        </View>
+        <Text style={styles.glassesArrow}>{isGlassesConnected ? '✓' : '›'}</Text>
+      </TouchableOpacity>
 
       {/* Последний запрос */}
       {lastQuery ? (
-        <View style={styles.queryCard}>
-          <Text style={styles.queryLabel}>Ты сказал:</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>ТЫ</Text>
           <Text style={styles.queryText}>"{lastQuery}"</Text>
         </View>
       ) : null}
 
       {/* Ответ Jarvis */}
-      <View style={styles.responseCard}>
-        <Text style={styles.responseLabel}>Jarvis:</Text>
-        <Text style={styles.responseText}>{lastResponse}</Text>
+      <View style={[styles.card, styles.responseCard]}>
+        <Text style={styles.cardLabel}>JARVIS</Text>
+        <Text style={styles.responseText}>{error ?? lastResponse}</Text>
       </View>
 
       {/* Кнопка голоса */}
-      <Animated.View style={[styles.voiceButtonWrapper, { transform: [{ scale: pulseAnim }] }]}>
-        <TouchableOpacity
-          style={[styles.voiceButton, listening !== 'idle' && styles.voiceButtonActive]}
-          onPress={handleVoicePress}
-          disabled={listening !== 'idle'}
-        >
-          {listening === 'processing' ? (
-            <ActivityIndicator color="#fff" size="large" />
-          ) : (
-            <Text style={styles.voiceIcon}>
-              {listening === 'listening' ? '🔴' : '🎙️'}
-            </Text>
-          )}
-        </TouchableOpacity>
-      </Animated.View>
+      <View style={styles.voiceSection}>
+        <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+          <TouchableOpacity
+            style={[
+              styles.voiceButton,
+              appState === 'listening' && styles.voiceBtnListening,
+              appState === 'thinking' && styles.voiceBtnThinking,
+              appState === 'speaking' && styles.voiceBtnSpeaking,
+              appState === 'error' && styles.voiceBtnError,
+            ]}
+            onPress={handleVoiceButton}
+            disabled={appState === 'thinking' || appState === 'speaking'}
+            activeOpacity={0.85}
+          >
+            {appState === 'thinking' ? (
+              <ActivityIndicator color="#fff" size="large" />
+            ) : (
+              <Text style={styles.voiceIcon}>{STATE_ICONS[appState]}</Text>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
 
-      <Text style={styles.hint}>
-        {listening === 'idle' ? 'Нажми и говори' :
-         listening === 'listening' ? 'Слушаю...' : 'Думаю...'}
-      </Text>
+        <Text style={styles.stateLabel}>{STATE_LABELS[appState]}</Text>
+
+        {appState === 'listening' && (
+          <TouchableOpacity onPress={stopListening} style={styles.cancelBtn}>
+            <Text style={styles.cancelBtnText}>Отмена</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
     </SafeAreaView>
   );
 };
 
+const BLUE = '#3B82F6';
+const DARK_BG = '#0A0A0F';
+const CARD_BG = '#13131F';
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0F',
-    alignItems: 'center',
-    paddingHorizontal: 24,
+    backgroundColor: DARK_BG,
+    paddingHorizontal: 20,
   },
   header: {
-    marginTop: 40,
     alignItems: 'center',
-    marginBottom: 32,
+    paddingTop: 32,
+    paddingBottom: 24,
   },
   title: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '700',
     color: '#FFFFFF',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#6B7280',
+    fontSize: 13,
+    color: '#4B5563',
     marginTop: 4,
   },
-  statusCard: {
+
+  // Ray-Ban card
+  glassesCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1A1A2E',
-    borderRadius: 16,
+    backgroundColor: CARD_BG,
+    borderRadius: 18,
     padding: 16,
-    width: '100%',
-    marginBottom: 16,
-    gap: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1F2937',
   },
   statusDot: {
-    width: 10,
-    height: 10,
+    width: 9,
+    height: 9,
     borderRadius: 5,
+    marginRight: 12,
   },
   dotGreen: { backgroundColor: '#10B981' },
-  dotYellow: { backgroundColor: '#F59E0B' },
-  dotRed: { backgroundColor: '#EF4444' },
-  statusText: {
-    color: '#D1D5DB',
-    fontSize: 15,
-    flex: 1,
-  },
-  connectBtn: {
-    backgroundColor: '#3B82F6',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  connectBtnText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  queryCard: {
-    backgroundColor: '#1A1A2E',
-    borderRadius: 16,
+  dotRed: { backgroundColor: '#374151' },
+  glassesInfo: { flex: 1 },
+  glassesTitle: { color: '#F9FAFB', fontSize: 15, fontWeight: '600' },
+  glassesSubtitle: { color: '#6B7280', fontSize: 12, marginTop: 2 },
+  glassesArrow: { color: '#374151', fontSize: 20 },
+
+  // Cards
+  card: {
+    backgroundColor: CARD_BG,
+    borderRadius: 18,
     padding: 16,
-    width: '100%',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1F2937',
   },
-  queryLabel: { color: '#6B7280', fontSize: 12, marginBottom: 4 },
-  queryText: { color: '#E5E7EB', fontSize: 15, fontStyle: 'italic' },
   responseCard: {
-    backgroundColor: '#1A1A2E',
-    borderRadius: 16,
-    padding: 20,
-    width: '100%',
-    marginBottom: 'auto',
-    borderLeftWidth: 3,
-    borderLeftColor: '#3B82F6',
+    flex: 1,
+    borderLeftWidth: 2,
+    borderLeftColor: BLUE,
   },
-  responseLabel: { color: '#3B82F6', fontSize: 12, fontWeight: '600', marginBottom: 8 },
-  responseText: { color: '#F9FAFB', fontSize: 17, lineHeight: 26 },
-  voiceButtonWrapper: {
-    marginBottom: 16,
+  cardLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2,
+    color: '#4B5563',
+    marginBottom: 8,
+  },
+  queryText: {
+    color: '#9CA3AF',
+    fontSize: 16,
+    fontStyle: 'italic',
+    lineHeight: 24,
+  },
+  responseText: {
+    color: '#F9FAFB',
+    fontSize: 17,
+    lineHeight: 28,
+  },
+
+  // Voice button
+  voiceSection: {
+    alignItems: 'center',
+    paddingBottom: 48,
+    paddingTop: 24,
+    gap: 12,
   },
   voiceButton: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#3B82F6',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: BLUE,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#3B82F6',
+    shadowColor: BLUE,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 20,
-    elevation: 10,
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    elevation: 12,
   },
-  voiceButtonActive: {
-    backgroundColor: '#1D4ED8',
-  },
-  voiceIcon: {
-    fontSize: 40,
-  },
-  hint: {
-    color: '#4B5563',
+  voiceBtnListening: { backgroundColor: '#DC2626' },
+  voiceBtnThinking: { backgroundColor: '#7C3AED' },
+  voiceBtnSpeaking: { backgroundColor: '#059669' },
+  voiceBtnError: { backgroundColor: '#374151' },
+  voiceIcon: { fontSize: 38 },
+  stateLabel: {
+    color: '#6B7280',
     fontSize: 14,
-    marginBottom: 40,
+    letterSpacing: 0.3,
+  },
+  cancelBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  cancelBtnText: {
+    color: '#9CA3AF',
+    fontSize: 14,
   },
 });

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist — необходимые разрешения для IvanArt x Jarvis iOS
+  Добавить эти ключи в основной Info.plist после инициализации React Native проекта
+-->
+
+<!-- Микрофон (голосовой ввод) -->
+<key>NSMicrophoneUsageDescription</key>
+<string>Jarvis слушает твои голосовые команды для управления через Ray-Ban очки</string>
+
+<!-- Bluetooth (подключение к Ray-Ban) -->
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>Для подключения к Meta Ray-Ban Smart Glasses</string>
+<key>NSBluetoothPeripheralUsageDescription</key>
+<string>Для связи с Ray-Ban очками через Bluetooth</string>
+<key>UIBackgroundModes</key>
+<array>
+    <string>bluetooth-central</string>
+    <string>bluetooth-peripheral</string>
+    <string>audio</string>
+</array>
+
+<!-- Распознавание речи (SFSpeechRecognizer) -->
+<key>NSSpeechRecognitionUsageDescription</key>
+<string>Для распознавания голосовых команд Jarvis</string>
+
+<!-- Сеть (Claude API, ElevenLabs) -->
+<key>NSAppTransportSecurity</key>
+<dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+    <key>NSExceptionDomains</key>
+    <dict>
+        <key>api.anthropic.com</key>
+        <dict>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key>
+            <false/>
+            <key>NSIncludesSubdomains</key>
+            <true/>
+        </dict>
+        <key>api.elevenlabs.io</key>
+        <dict>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key>
+            <false/>
+            <key>NSIncludesSubdomains</key>
+            <true/>
+        </dict>
+        <!-- Для локального бэкенда при разработке -->
+        <key>localhost</key>
+        <dict>
+            <key>NSExceptionAllowsInsecureHTTPLoads</key>
+            <true/>
+        </dict>
+    </dict>
+</dict>
