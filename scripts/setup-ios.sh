@@ -28,7 +28,6 @@ if [ -d "$TEMP_APP" ]; then
 fi
 
 npx react-native@0.73.0 init IvanArtJarvisTemp \
-  --skip-git-init \
   --pm npm
 
 echo -e "${GREEN}  ✓ Нативный проект создан${NC}"
