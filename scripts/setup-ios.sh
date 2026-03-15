@@ -41,12 +41,7 @@ cd "$REPO_DIR"
 rm -rf ios/
 cp -r "$TEMP_APP/ios/" ios/
 
-# Переименовываем App → IvanArtJarvis в нативных файлах
-find ios/ -name "*.swift" -o -name "*.m" -o -name "*.h" | xargs sed -i '' 's/IvanArtJarvisTemp/IvanArtJarvis/g' 2>/dev/null || true
-find ios/ -name "*.pbxproj" | xargs sed -i '' 's/IvanArtJarvisTemp/IvanArtJarvis/g' 2>/dev/null || true
-find ios/ -name "*.plist" | xargs sed -i '' 's/IvanArtJarvisTemp/IvanArtJarvis/g' 2>/dev/null || true
-
-# Переименовываем папки
+# Переименовываем папки СНАЧАЛА
 if [ -d "ios/IvanArtJarvisTemp" ]; then
   mv ios/IvanArtJarvisTemp ios/IvanArtJarvis
 fi
@@ -56,6 +51,10 @@ fi
 if [ -d "ios/IvanArtJarvisTemp.xcworkspace" ]; then
   mv ios/IvanArtJarvisTemp.xcworkspace ios/IvanArtJarvis.xcworkspace
 fi
+
+# Потом заменяем имя внутри файлов
+find ios/ -type f \( -name "*.swift" -o -name "*.m" -o -name "*.h" -o -name "*.pbxproj" -o -name "*.plist" -o -name "Podfile" \) \
+  -exec sed -i '' 's/IvanArtJarvisTemp/IvanArtJarvis/g' {} \;
 
 echo -e "${GREEN}  ✓ iOS файлы скопированы${NC}"
 
