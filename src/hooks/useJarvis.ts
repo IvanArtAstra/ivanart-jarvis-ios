@@ -1,116 +1,206 @@
 /**
- * useJarvis — главный хук
- * Оркестрирует: Voice → Jarvis AI → TTS → Ray-Ban
+ * useJarvis v2 — с фоновым режимом и wake word
+ *
+ * Режимы:
+ * - MANUAL: нажал кнопку → говоришь
+ * - ALWAYS_ON: всегда слушает "Джарвис" → активируется
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { voiceService } from '../services/voiceService';
 import { jarvisService } from '../services/jarvisService';
 import { ttsService } from '../services/ttsService';
 import { bleService } from '../services/bleService';
+import { wakeWordService } from '../services/wakeWordService';
+import { backgroundService } from '../services/backgroundService';
+import { notificationService } from '../services/notificationService';
 
 export type AppState =
-  | 'idle'        // ждём команды
-  | 'listening'   // слушаем голос
-  | 'thinking'    // Claude обрабатывает
-  | 'speaking'    // Jarvis отвечает
-  | 'error';      // что-то пошло не так
+  | 'idle'          // ждём
+  | 'wake_listen'   // фоновое прослушивание (wake word)
+  | 'listening'     // активно слушаем запрос
+  | 'thinking'      // Claude обрабатывает
+  | 'speaking'      // Jarvis отвечает
+  | 'error';
+
+export type ListenMode = 'manual' | 'always_on';
 
 interface JarvisState {
   appState: AppState;
+  listenMode: ListenMode;
   lastQuery: string;
   lastResponse: string;
+  partialText: string;        // текст в реальном времени при распознавании
   isGlassesConnected: boolean;
   error: string | null;
+  sessionCount: number;       // сколько раз поговорили за сессию
 }
 
 export const useJarvis = () => {
   const [state, setState] = useState<JarvisState>({
     appState: 'idle',
+    listenMode: 'manual',
     lastQuery: '',
-    lastResponse: 'Jarvis готов. Нажми и говори.',
+    lastResponse: 'Jarvis готов. Скажи "Джарвис" или нажми кнопку.',
+    partialText: '',
     isGlassesConnected: false,
     error: null,
+    sessionCount: 0,
   });
 
-  const setAppState = (appState: AppState) =>
-    setState(prev => ({ ...prev, appState, error: null }));
+  const isProcessingRef = useRef(false);
 
-  /**
-   * Основной цикл: нажал кнопку → говоришь → Jarvis отвечает
-   */
+  const update = (patch: Partial<JarvisState>) =>
+    setState(prev => ({ ...prev, ...patch }));
+
+  // ─────────────────────────────────────────────
+  // Основная обработка запроса (общая для обоих режимов)
+  // ─────────────────────────────────────────────
+  const processQuery = useCallback(async (transcript: string) => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+
+    update({ lastQuery: transcript, appState: 'thinking', partialText: '' });
+    notificationService.hapticResponse();
+
+    const response = await jarvisService.ask(transcript);
+
+    update({
+      lastResponse: response,
+      appState: 'speaking',
+      sessionCount: state.sessionCount + 1,
+    });
+
+    // Отправить на очки если подключены
+    if (bleService.isConnected()) {
+      await notificationService.sendToGlasses(
+        { title: 'Jarvis', body: response },
+        bleService.sendToGlasses.bind(bleService)
+      );
+    }
+
+    // Воспроизвести TTS
+    await ttsService.speak(response);
+
+    isProcessingRef.current = false;
+
+    // Вернуться в нужный режим
+    const nextState = state.listenMode === 'always_on' ? 'wake_listen' : 'idle';
+    update({ appState: nextState });
+
+    // Если always_on — перезапустить прослушивание wake word
+    if (state.listenMode === 'always_on') {
+      startWakeWordListening();
+    }
+  }, [state.listenMode, state.sessionCount]);
+
+  // ─────────────────────────────────────────────
+  // Wake word активация
+  // ─────────────────────────────────────────────
+  const handleWakeWordDetected = useCallback(async () => {
+    if (isProcessingRef.current) return;
+
+    // Стоп-сигнал — вибрация на телефоне
+    notificationService.hapticWakeWord();
+
+    // Пауза на wake word прослушивание
+    await wakeWordService.stop();
+
+    // Запустить активное прослушивание запроса
+    update({ appState: 'listening', partialText: '' });
+
+    await voiceService.startListening(
+      (transcript) => processQuery(transcript),
+      (error) => {
+        update({ error, appState: 'wake_listen' });
+        startWakeWordListening(); // перезапуск
+      }
+    );
+  }, [processQuery]);
+
+  // ─────────────────────────────────────────────
+  // Запустить фоновое прослушивание wake word
+  // ─────────────────────────────────────────────
+  const startWakeWordListening = useCallback(async () => {
+    await wakeWordService.start(
+      handleWakeWordDetected,
+      (partial) => update({ partialText: partial })
+    );
+  }, [handleWakeWordDetected]);
+
+  // ─────────────────────────────────────────────
+  // Переключение режимов
+  // ─────────────────────────────────────────────
+  const setListenMode = useCallback(async (mode: ListenMode) => {
+    update({ listenMode: mode });
+
+    if (mode === 'always_on') {
+      // Включить keep-alive + wake word
+      await backgroundService.startKeepAlive();
+      await startWakeWordListening();
+      update({ appState: 'wake_listen', lastResponse: 'Слушаю в фоне... Скажи "Джарвис"' });
+    } else {
+      // Выключить фоновый режим
+      await wakeWordService.stop();
+      await backgroundService.stopKeepAlive();
+      update({ appState: 'idle', lastResponse: 'Нажми кнопку и говори.' });
+    }
+  }, [startWakeWordListening]);
+
+  // ─────────────────────────────────────────────
+  // Ручной режим — кнопка
+  // ─────────────────────────────────────────────
   const startVoiceInteraction = useCallback(async () => {
     if (state.appState !== 'idle') return;
 
-    setAppState('listening');
+    update({ appState: 'listening', partialText: '', error: null });
 
     await voiceService.startListening(
-      async (transcript) => {
-        // Голос получен — отправляем в Claude
-        setState(prev => ({ ...prev, lastQuery: transcript, appState: 'thinking' }));
-
-        const response = await jarvisService.ask(transcript);
-
-        setState(prev => ({ ...prev, lastResponse: response, appState: 'speaking' }));
-
-        // Воспроизвести ответ (через очки или телефон)
-        await ttsService.speak(response);
-
-        setAppState('idle');
-      },
+      (transcript) => processQuery(transcript),
       (error) => {
-        setState(prev => ({ ...prev, error, appState: 'error' }));
-        setTimeout(() => setAppState('idle'), 3000);
+        update({ error, appState: 'error' });
+        setTimeout(() => update({ appState: 'idle' }), 3000);
       }
     );
-  }, [state.appState]);
+  }, [state.appState, processQuery]);
 
-  /**
-   * Остановить прослушивание
-   */
   const stopListening = useCallback(async () => {
     await voiceService.stopListening();
-    setAppState('idle');
+    update({ appState: 'idle' });
   }, []);
 
-  /**
-   * Подключить Ray-Ban очки
-   */
+  // ─────────────────────────────────────────────
+  // Ray-Ban подключение
+  // ─────────────────────────────────────────────
   const connectGlasses = useCallback(async (): Promise<boolean> => {
     try {
-      setState(prev => ({ ...prev, appState: 'idle', error: null }));
-
       await bleService.scanForGlasses(async (device) => {
         await bleService.connect(device.id);
-        setState(prev => ({
-          ...prev,
+        update({
           isGlassesConnected: true,
-          lastResponse: `Ray-Ban "${device.name}" подключены ✓`,
-        }));
+          lastResponse: `Ray-Ban "${device.name}" подключены ✓ Ответы идут через очки.`,
+        });
       });
-
       return true;
     } catch {
-      setState(prev => ({
-        ...prev,
-        error: 'Очки не найдены. Убедись что они включены.',
-      }));
+      update({ error: 'Очки не найдены. Убедись что они включены.' });
       return false;
     }
   }, []);
 
-  /**
-   * Отключить очки
-   */
   const disconnectGlasses = useCallback(async () => {
     await bleService.disconnect();
-    setState(prev => ({ ...prev, isGlassesConnected: false }));
+    update({ isGlassesConnected: false });
   }, []);
 
-  // Cleanup при размонтировании
+  // ─────────────────────────────────────────────
+  // Cleanup
+  // ─────────────────────────────────────────────
   useEffect(() => {
     return () => {
       voiceService.destroy();
+      wakeWordService.stop();
+      backgroundService.stopKeepAlive();
       ttsService.stop();
     };
   }, []);
@@ -119,6 +209,7 @@ export const useJarvis = () => {
     ...state,
     startVoiceInteraction,
     stopListening,
+    setListenMode,
     connectGlasses,
     disconnectGlasses,
   };
