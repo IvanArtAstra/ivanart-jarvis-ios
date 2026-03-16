@@ -1,151 +1,59 @@
 #!/usr/bin/env python3
 """
-Jarvis iOS Bridge v3 — Dedicated Agent Architecture
-iOS messages → file queue → OpenClaw isolated session → response → iOS
+Jarvis iOS Bridge v4 — Direct OpenClaw Routing
+iOS → WebSocket Bridge → File Queue → Jarvis (OpenClaw) → Response → iOS
 
+No external API keys needed. All processing by Jarvis via OpenClaw gateway.
 Usage: python scripts/jarvis_ios_bridge.py [--port 8766]
 """
 import asyncio, json, os, sys, uuid, time, subprocess, re, argparse
 from pathlib import Path
 from datetime import datetime
 
-for pkg in ["websockets", "openai"]:
-    try: __import__(pkg.replace("-","_"))
+for pkg in ["websockets"]:
+    try: __import__(pkg)
     except ImportError:
         subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
 
 import websockets
-from openai import AsyncOpenAI
 
-# ── Config ─────────────────────────────────────────────────────────
 PORT       = 8766
 WORKSPACE  = Path(r"C:\Users\ivana\.openclaw\workspace")
 IOS_BRIDGE = WORKSPACE / "shared" / "ios_bridge"
-SESSIONS   = IOS_BRIDGE / "sessions"
 REQUESTS   = IOS_BRIDGE / "requests"
 RESPONSES  = IOS_BRIDGE / "responses"
+SESSIONS   = IOS_BRIDGE / "sessions"
 
-SYSTEM_PROMPT = """Ты Jarvis — персональный ИИ-ассистент Ивана Артемьева (Sir Ivan).
-Работаешь через Ray-Ban Meta Smart Glasses и iOS приложение IvanArt × Jarvis.
-Характер: спокойный, точный, с лёгкой иронией — как Jarvis из Iron Man.
-Отвечай кратко (2-4 предложения), по делу. Язык: русский, если не попросят иначе.
-Ты помнишь предыдущие сообщения в этом диалоге и используешь их как контекст."""
+for d in [REQUESTS, RESPONSES, SESSIONS]:
+    d.mkdir(parents=True, exist_ok=True)
 
-def notify_telegram(text: str):
-    try:
-        cfg = (Path.home() / ".openclaw" / "openclaw.json").read_text(encoding="utf-8")
-        token = re.search(r'"token"\s*:\s*"(\d+:[A-Za-z0-9_\-]+)"', cfg)
-        if not token: return
-        import urllib.request
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token.group(1)}/sendMessage",
-            data=json.dumps({"chat_id": "2146714203", "text": text, "parse_mode": "HTML"}).encode(),
-            headers={"Content-Type": "application/json"}
-        )
-        urllib.request.urlopen(req, timeout=5)
-    except Exception as e:
-        print(f"[TG] {e}")
+# ── Session ────────────────────────────────────────────────────────
+def load_session(sid):
+    p = SESSIONS / f"{sid}.json"
+    if p.exists():
+        return json.loads(p.read_text(encoding="utf-8"))
+    return {"id": sid, "created": datetime.now().isoformat(), "messages": 0}
 
-def get_client():
-    key = os.environ.get("OPENAI_API_KEY", "")
-    if not key:
-        try:
-            cfg = (Path.home() / ".openclaw" / "openclaw.json").read_text(encoding="utf-8")
-            m = re.search(r'sk-proj-[A-Za-z0-9_\-]+', cfg)
-            key = m.group(0) if m else ""
-        except: pass
-    return AsyncOpenAI(api_key=key) if key else None
+def save_session(sid, data):
+    (SESSIONS / f"{sid}.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# ── Session Memory ─────────────────────────────────────────────────
-def load_session(session_id: str) -> dict:
-    """Load persistent session (history + metadata)."""
-    path = SESSIONS / f"{session_id}.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return {"id": session_id, "created": datetime.now().isoformat(), "history": [], "messages": 0}
-
-def save_session(session_id: str, data: dict):
-    """Persist session state."""
-    path = SESSIONS / f"{session_id}.json"
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def append_conversation_log(session_id: str, role: str, text: str):
-    """Append to human-readable conversation log."""
-    log_path = IOS_BRIDGE / f"conversation_{session_id}.md"
+def log_conversation(sid, role, text):
+    p = IOS_BRIDGE / f"conversation_{sid}.md"
     ts = datetime.now().strftime("%H:%M:%S")
-    prefix = "🗣 **Ты**" if role == "user" else "◈ **Jarvis**"
-    entry = f"\n**{ts}** {prefix}: {text}\n"
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(entry)
+    icon = "🗣" if role == "user" else "◈"
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(f"\n**{ts}** {icon} {text}\n")
 
-# ── AI Processing ──────────────────────────────────────────────────
-async def ask_ai(client: AsyncOpenAI, text: str, history: list) -> str:
-    if not client:
-        return "Ошибка: API ключ не найден. Проверь OPENAI_API_KEY."
-    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
-    msgs += history[-20:]
-    msgs.append({"role": "user", "content": text})
-    try:
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=msgs,
-            max_tokens=400,
-            temperature=0.7,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Ошибка API: {str(e)[:120]}"
-
-# ── Request Queue ──────────────────────────────────────────────────
-pending_responses: dict[str, asyncio.Future] = {}
-
-async def process_request(client: AsyncOpenAI, req_id: str, session_id: str, text: str):
-    """Process iOS message and resolve the future."""
-    session = load_session(session_id)
-    history = session["history"]
-
-    # Log incoming
-    append_conversation_log(session_id, "user", text)
-    print(f"[iOS/{session_id[:8]}] 🗣 {text}")
-
-    # Call AI
-    reply = await ask_ai(client, text, history)
-
-    # Update session
-    history.append({"role": "user", "content": text})
-    history.append({"role": "assistant", "content": reply})
-    if len(history) > 40: history = history[-40:]
-    session["history"] = history
-    session["messages"] += 1
-    save_session(session_id, session)
-
-    # Log response
-    append_conversation_log(session_id, "assistant", reply)
-    print(f"[Jarvis/{session_id[:8]}] {reply[:80]}")
-
-    # Write response file (for OpenClaw cron pickup)
-    resp_file = RESPONSES / f"{req_id}.json"
-    resp_file.write_text(json.dumps({
-        "req_id": req_id, "session_id": session_id,
-        "text": reply, "timestamp": datetime.now().isoformat()
-    }, ensure_ascii=False), encoding="utf-8")
-
-    # Resolve pending future
-    if req_id in pending_responses:
-        pending_responses[req_id].set_result(reply)
-
-# ── WebSocket Handler ──────────────────────────────────────────────
+# ── WebSocket handler ──────────────────────────────────────────────
 async def handle(ws):
-    client = get_client()
-    session_id = str(uuid.uuid4())[:12]
-    print(f"[+] New iOS session: {session_id}")
-
+    sid = str(uuid.uuid4())[:12]
+    print(f"[+] iOS session: {sid}")
     try:
-        # Welcome with session info
         await ws.send(json.dumps({
             "type": "connected",
-            "session_id": session_id,
-            "message": f"◈ Jarvis подключён | Сессия: {session_id}"
+            "session_id": sid,
+            "message": f"◈ Jarvis подключён | Сессия: {sid}"
         }))
 
         async for raw in ws:
@@ -153,85 +61,78 @@ async def handle(ws):
                 data = json.loads(raw)
                 t    = data.get("type", "")
                 text = data.get("text", "").strip()
-
-                # Accept session_id from client if provided
                 if data.get("session_id"):
-                    session_id = data["session_id"]
+                    sid = data["session_id"]
 
                 if t in ("voice", "text", "chat") and text:
                     req_id = str(uuid.uuid4())
-
-                    # State: thinking
                     await ws.send(json.dumps({"type": "state", "state": "thinking"}))
 
-                    # Create future for this request
-                    loop = asyncio.get_event_loop()
-                    fut = loop.create_future()
-                    pending_responses[req_id] = fut
+                    # Log incoming
+                    log_conversation(sid, "user", text)
+                    session = load_session(sid)
 
-                    # Process async
-                    asyncio.create_task(process_request(client, req_id, session_id, text))
+                    # Write request to queue — Jarvis cron picks up
+                    req = {
+                        "req_id": req_id,
+                        "session_id": sid,
+                        "text": text,
+                        "timestamp": datetime.now().isoformat(),
+                        "status": "pending"
+                    }
+                    (REQUESTS / f"{req_id}.json").write_text(
+                        json.dumps(req, ensure_ascii=False), encoding="utf-8")
+                    print(f"[Queue] → {req_id[:8]} | {text[:60]}")
 
-                    # Wait for response (max 30s)
-                    try:
-                        reply = await asyncio.wait_for(fut, timeout=30)
+                    # Wait for Jarvis response (poll response file, max 30s)
+                    resp_file = RESPONSES / f"{req_id}.json"
+                    reply = None
+                    for _ in range(60):  # 60 × 0.5s = 30s
+                        await asyncio.sleep(0.5)
+                        if resp_file.exists():
+                            r = json.loads(resp_file.read_text(encoding="utf-8"))
+                            reply = r.get("text", "")
+                            resp_file.unlink(missing_ok=True)
+                            (REQUESTS / f"{req_id}.json").unlink(missing_ok=True)
+                            break
+
+                    if reply:
+                        log_conversation(sid, "assistant", reply)
+                        session["messages"] = session.get("messages", 0) + 1
+                        save_session(sid, session)
                         await ws.send(json.dumps({
                             "type": "response",
                             "text": reply,
                             "state": "idle",
-                            "session_id": session_id
+                            "session_id": sid
                         }))
-                    except asyncio.TimeoutError:
+                        print(f"[Jarvis] {reply[:80]}")
+                    else:
                         await ws.send(json.dumps({
                             "type": "error",
-                            "text": "Timeout — попробуй снова",
+                            "text": "Нет ответа — Jarvis занят, попробуй снова",
                             "state": "idle"
                         }))
-                    finally:
-                        pending_responses.pop(req_id, None)
 
                 elif t == "ping":
                     await ws.send(json.dumps({"type": "pong"}))
 
-                elif t == "get_session":
-                    session = load_session(session_id)
-                    await ws.send(json.dumps({
-                        "type": "session_info",
-                        "session_id": session_id,
-                        "messages": session["messages"],
-                        "created": session["created"]
-                    }))
-
             except json.JSONDecodeError:
                 await ws.send(json.dumps({"type": "error", "message": "Bad JSON"}))
-
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
-        print(f"[-] Session closed: {session_id}")
+        print(f"[-] Session: {sid}")
 
 # ── Main ───────────────────────────────────────────────────────────
-async def main(port: int):
-    client = get_client()
-    status = "GPT-4o-mini ✅" if client else "⚠️ No API key!"
-
+async def main(port):
     print(f"""
-╔══════════════════════════════════════════╗
-║   Jarvis iOS Bridge v3 — Agent Mode      ║
-║   Port: {port}  |  AI: {status:<20}║
-╚══════════════════════════════════════════╝
-📁 Sessions: {SESSIONS}
-📁 Logs:     {IOS_BRIDGE}
+╔═══════════════════════════════════════════╗
+║  Jarvis iOS Bridge v4 — OpenClaw Direct   ║
+║  Port: {port}  |  Queue: shared/ios_bridge/  ║
+╚═══════════════════════════════════════════╝
+Routing: iOS → File Queue → Jarvis (OpenClaw) → iOS
 """)
-
-    notify_telegram(
-        f"🤖 <b>Jarvis iOS Bridge v3 запущен</b>\n\n"
-        f"🎯 Режим: Dedicated Agent Sessions\n"
-        f"📡 <code>ws://192.168.0.39:{port}</code>\n"
-        f"📁 Логи: shared/ios_bridge/\n\n"
-        f"Каждый iOS клиент — отдельная сессия с памятью."
-    )
-
     async with websockets.serve(handle, "0.0.0.0", port):
         print(f"[WS] ws://0.0.0.0:{port} ✅\n")
         await asyncio.Future()
