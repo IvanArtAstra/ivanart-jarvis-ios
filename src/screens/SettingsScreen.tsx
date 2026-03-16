@@ -7,7 +7,8 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   ScrollView, StyleSheet, ActivityIndicator, Alert,
-, Platform } from 'react-native';
+  Platform,
+} from 'react-native';
 import {
   getBackendUrl, setBackendUrl,
   getVoiceId, setVoiceId,
