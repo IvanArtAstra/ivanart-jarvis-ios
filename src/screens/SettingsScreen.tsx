@@ -1,6 +1,6 @@
 /**
  * SettingsScreen.tsx — Настройки Jarvis v2
- * Backend URL, Bridge URL, Voice ID, connections status
+ * Backend URL, Bridge URL, API URL, connections status
  */
 
 import React, { useEffect, useState } from 'react';
@@ -17,6 +17,7 @@ import {
   BRIDGE_URL_DEFAULT,
 } from '../utils/config';
 import { agentBridgeService } from '../services/agentBridgeService';
+import { jarvisApi, API_URL_DEFAULT } from '../services/jarvisApiService';
 
 interface Props {
   onClose: () => void;
