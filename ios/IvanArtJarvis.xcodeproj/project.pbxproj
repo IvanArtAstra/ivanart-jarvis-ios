@@ -273,13 +273,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis/Pods-IvanArtJarvis-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis/Pods-IvanArtJarvis-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -338,13 +334,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis-IvanArtJarvisTests/Pods-IvanArtJarvis-IvanArtJarvisTests-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis-IvanArtJarvisTests/Pods-IvanArtJarvis-IvanArtJarvisTests-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -359,13 +351,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis/Pods-IvanArtJarvis-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis/Pods-IvanArtJarvis-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -380,13 +368,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis-IvanArtJarvisTests/Pods-IvanArtJarvis-IvanArtJarvisTests-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-IvanArtJarvis-IvanArtJarvisTests/Pods-IvanArtJarvis-IvanArtJarvisTests-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

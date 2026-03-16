@@ -1065,6 +1065,12 @@ PODS:
     - React-perflogger (= 0.73.0)
   - RNCAsyncStorage (1.24.0):
     - React-Core
+  - RNFS (2.20.0):
+    - React-Core
+  - RNGestureHandler (2.30.0):
+    - glog
+    - RCT-Folly (= 2022.05.16.00)
+    - React-Core
   - RNScreens (3.37.0):
     - glog
     - RCT-Folly (= 2022.05.16.00)
@@ -1133,6 +1139,8 @@ DEPENDENCIES:
   - React-utils (from `../node_modules/react-native/ReactCommon/react/utils`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
   - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
+  - RNFS (from `../node_modules/react-native-fs`)
+  - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
   - RNScreens (from `../node_modules/react-native-screens`)
   - RNSound (from `../node_modules/react-native-sound`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
@@ -1248,6 +1256,10 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon"
   RNCAsyncStorage:
     :path: "../node_modules/@react-native-async-storage/async-storage"
+  RNFS:
+    :path: "../node_modules/react-native-fs"
+  RNGestureHandler:
+    :path: "../node_modules/react-native-gesture-handler"
   RNScreens:
     :path: "../node_modules/react-native-screens"
   RNSound:
@@ -1310,6 +1322,8 @@ SPEC CHECKSUMS:
   React-utils: 93c6c62491c0c2f83646e660287b77fc210105ce
   ReactCommon: b2d9a4d3c5a82ac14a0054ccdba9e6858fef873b
   RNCAsyncStorage: b6410dead2732b5c72a7fdb1ecb5651bbcf4674b
+  RNFS: 89de7d7f4c0f6bafa05343c578f61118c8282ed8
+  RNGestureHandler: f1c8544c074f74911e713ede852b07c51c0cf8f2
   RNScreens: b12996ef8ef492d56d126400e8aef6e613c13ef6
   RNSound: 314cc5226453ef4a3314a196c65e8a65e5106a7b
   SocketRocket: f32cd54efbe0f095c4d7594881e52619cfe80b17
