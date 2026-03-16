@@ -1,381 +1,378 @@
 /**
- * ChatScreen — Jarvis Chat Interface
- * Real-time chat with Jarvis AI via WebSocket bridge
+ * ChatScreen.tsx — Jarvis Chat Interface
+ * Chat bubbles + text input + voice button
+ * Connected to jarvis_ios_bridge.py via AgentBridgeService
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity,
-  FlatList, StyleSheet, KeyboardAvoidingView,
-  Platform, Animated, SafeAreaView, ActivityIndicator,
+  View, Text, TextInput, TouchableOpacity, ScrollView,
+  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
+  Keyboard,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const BRIDGE_URL_KEY = '@jarvis_bridge_url';
-const DEFAULT_URL    = 'ws://100.70.68.84:8766';
-
-type MsgRole = 'user' | 'jarvis' | 'system';
+import { agentBridgeService } from '../services/agentBridgeService';
 
 interface Message {
-  id:        string;
-  role:      MsgRole;
-  text:      string;
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
   timestamp: number;
 }
 
-type BridgeState = 'disconnected' | 'connecting' | 'connected' | 'thinking';
+const BLUE = '#3B82F6';
+const DARK_BG = '#0A0A0F';
+const CARD_BG = '#13131F';
+const JARVIS_BUBBLE = '#1A1A2E';
+const USER_BUBBLE = '#1D4ED8';
 
 export const ChatScreen = () => {
-  const [messages,     setMessages]     = useState<Message[]>([{
-    id: '0', role: 'jarvis',
-    text: 'Привет. Я Jarvis. Чем могу помочь?',
+  const [messages, setMessages] = useState<Message[]>([{
+    id: 'welcome',
+    role: 'assistant',
+    text: 'Привет! Я Jarvis. Напиши или скажи что-нибудь.',
     timestamp: Date.now(),
   }]);
-  const [input,        setInput]        = useState('');
-  const [bridgeState,  setBridgeState]  = useState<BridgeState>('disconnected');
-  const [bridgeUrl,    setBridgeUrl]    = useState(DEFAULT_URL);
+  const [inputText, setInputText] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
-  const wsRef      = useRef<WebSocket | null>(null);
-  const listRef    = useRef<FlatList>(null);
-  const dotAnim    = useRef(new Animated.Value(0)).current;
-  const reconnectT = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Typing dots animation
+  // ─── Connect to Bridge ────────────────────────────────────
   useEffect(() => {
-    if (bridgeState === 'thinking') {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(dotAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-          Animated.timing(dotAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
-        ])
-      ).start();
-    } else {
-      dotAnim.setValue(0);
-    }
-  }, [bridgeState]);
-
-  // Load URL + connect
-  useEffect(() => {
-    AsyncStorage.getItem(BRIDGE_URL_KEY).then(url => {
-      const target = url || DEFAULT_URL;
-      setBridgeUrl(target);
-      connect(target);
+    agentBridgeService.connect((connected) => {
+      setIsConnected(connected);
     });
+
+    // Listen for responses
+    const handleResponse = (data: any) => {
+      const msg: Message = {
+        id: `j_${Date.now()}`,
+        role: 'assistant',
+        text: data.text,
+        timestamp: Date.now(),
+      };
+      setMessages(prev => [...prev, msg]);
+      setIsThinking(false);
+    };
+
+    const handleState = (data: any) => {
+      if (data.state === 'thinking') setIsThinking(true);
+      else if (data.state === 'idle') setIsThinking(false);
+    };
+
+    agentBridgeService.onResponse(handleResponse);
+    agentBridgeService.onStateChange(handleState);
+
     return () => {
-      wsRef.current?.close();
-      if (reconnectT.current) clearTimeout(reconnectT.current);
+      agentBridgeService.off('response', handleResponse);
+      agentBridgeService.off('state', handleState);
     };
   }, []);
 
-  const addMessage = useCallback((role: MsgRole, text: string) => {
-    setMessages(prev => [...prev, {
-      id: String(Date.now() + Math.random()),
-      role, text,
+  // ─── Auto-scroll ──────────────────────────────────────────
+  useEffect(() => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  }, [messages, isThinking]);
+
+  // ─── Send Message ─────────────────────────────────────────
+  const sendMessage = useCallback(() => {
+    const text = inputText.trim();
+    if (!text) return;
+
+    const msg: Message = {
+      id: `u_${Date.now()}`,
+      role: 'user',
+      text,
+      timestamp: Date.now(),
+    };
+    setMessages(prev => [...prev, msg]);
+    setInputText('');
+    Keyboard.dismiss();
+
+    if (isConnected) {
+      agentBridgeService.sendMessage(text);
+    } else {
+      // Offline fallback message
+      setTimeout(() => {
+        setMessages(prev => [...prev, {
+          id: `j_${Date.now()}`,
+          role: 'assistant',
+          text: 'Нет подключения к Bridge. Проверь Settings → Bridge URL.',
+          timestamp: Date.now(),
+        }]);
+      }, 500);
+    }
+  }, [inputText, isConnected]);
+
+  // ─── Clear History ────────────────────────────────────────
+  const clearChat = useCallback(() => {
+    setMessages([{
+      id: 'cleared',
+      role: 'assistant',
+      text: 'История очищена. Начнём заново!',
       timestamp: Date.now(),
     }]);
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    agentBridgeService.clearHistory();
   }, []);
 
-  const connect = useCallback((url: string) => {
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
-    }
-
-    setBridgeState('connecting');
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setBridgeState('connected');
-    };
-
-    ws.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === 'connected') {
-          addMessage('system', '🔗 Мост подключён');
-        } else if (data.type === 'state') {
-          if (data.state === 'thinking') setBridgeState('thinking');
-          else if (data.state === 'idle') setBridgeState('connected');
-        } else if (data.type === 'response') {
-          setBridgeState('connected');
-          addMessage('jarvis', data.text);
-        } else if (data.type === 'error') {
-          addMessage('system', `⚠️ ${data.message}`);
-        }
-      } catch {}
-    };
-
-    ws.onerror = () => {
-      setBridgeState('disconnected');
-    };
-
-    ws.onclose = () => {
-      setBridgeState('disconnected');
-      reconnectT.current = setTimeout(() => connect(url), 5000);
-    };
-  }, [addMessage]);
-
-  const sendMessage = useCallback((text: string) => {
-    const msg = text.trim();
-    if (!msg) return;
-
-    addMessage('user', msg);
-    setInput('');
-
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'text', text: msg }));
-      setBridgeState('thinking');
-    } else {
-      addMessage('system', '⚠️ Мост не подключён. Переподключение...');
-      connect(bridgeUrl);
-    }
-  }, [addMessage, bridgeUrl, connect]);
-
-  const renderMessage = ({ item }: { item: Message }) => {
-    if (item.role === 'system') {
-      return (
-        <View style={styles.systemMsgRow}>
-          <Text style={styles.systemMsg}>{item.text}</Text>
-        </View>
-      );
-    }
-
-    const isUser = item.role === 'user';
-    return (
-      <View style={[styles.msgRow, isUser ? styles.msgRowUser : styles.msgRowJarvis]}>
-        {!isUser && <Text style={styles.jarvisLabel}>◈</Text>}
-        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleJarvis]}>
-          <Text style={[styles.bubbleText, isUser ? styles.bubbleTextUser : styles.bubbleTextJarvis]}>
-            {item.text}
-          </Text>
-        </View>
-      </View>
-    );
-  };
-
-  const stateColor = {
-    disconnected: '#374151',
-    connecting:   '#F59E0B',
-    connected:    '#00D4A0',
-    thinking:     '#A855F7',
-  }[bridgeState];
-
-  const stateLabel = {
-    disconnected: 'Не подключён',
-    connecting:   'Подключение...',
-    connected:    'Готов',
-    thinking:     'Думает...',
-  }[bridgeState];
-
+  // ─── Render ───────────────────────────────────────────────
   return (
-    <SafeAreaView style={styles.container}>
-
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={0}
+    >
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>◈ <Text style={styles.titleAccent}>JARVIS</Text> CHAT</Text>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusDot, { backgroundColor: stateColor }]} />
-          <Text style={[styles.statusText, { color: stateColor }]}>{stateLabel}</Text>
-          {bridgeState === 'disconnected' && (
-            <TouchableOpacity onPress={() => connect(bridgeUrl)} style={styles.reconnectBtn}>
-              <Text style={styles.reconnectText}>Подключить</Text>
-            </TouchableOpacity>
-          )}
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerIcon}>◈</Text>
+          <View>
+            <Text style={styles.headerTitle}>JARVIS CHAT</Text>
+            <View style={styles.statusRow}>
+              <View style={[styles.dot, isConnected ? styles.dotGreen : styles.dotRed]} />
+              <Text style={styles.statusText}>
+                {isConnected ? 'Connected' : 'Offline'}
+              </Text>
+            </View>
+          </View>
         </View>
+        <TouchableOpacity onPress={clearChat} style={styles.clearBtn}>
+          <Text style={styles.clearText}>🗑</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Messages */}
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={m => m.id}
-        renderItem={renderMessage}
-        contentContainerStyle={styles.listContent}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        showsVerticalScrollIndicator={false}
-      />
-
-      {/* Typing indicator */}
-      {bridgeState === 'thinking' && (
-        <View style={styles.typingRow}>
-          <Text style={styles.jarvisLabel}>◈</Text>
-          <View style={styles.typingBubble}>
-            {[0, 1, 2].map(i => (
-              <Animated.View key={i} style={[styles.typingDot, {
-                opacity: dotAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: i === 1 ? [0.3, 1] : [0.6, 0.3],
-                }),
-                transform: [{
-                  translateY: dotAnim.interpolate({
-                    inputRange: [0, 0.5, 1],
-                    outputRange: i === 1 ? [0, -4, 0] : [0, -2, 0],
-                  }),
-                }],
-              }]} />
-            ))}
+      <ScrollView
+        ref={scrollRef}
+        style={styles.messageList}
+        contentContainerStyle={styles.messageContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {messages.map(msg => (
+          <View
+            key={msg.id}
+            style={[
+              styles.bubble,
+              msg.role === 'user' ? styles.userBubble : styles.jarvisBubble,
+            ]}
+          >
+            {msg.role === 'assistant' && (
+              <Text style={styles.bubbleLabel}>◈ JARVIS</Text>
+            )}
+            {msg.role === 'user' && (
+              <Text style={styles.bubbleLabelUser}>🗣 ТЫ</Text>
+            )}
+            <Text style={[
+              styles.bubbleText,
+              msg.role === 'user' && styles.userBubbleText,
+            ]}>
+              {msg.text}
+            </Text>
+            <Text style={styles.timestamp}>
+              {new Date(msg.timestamp).toLocaleTimeString('ru-RU', {
+                hour: '2-digit', minute: '2-digit',
+              })}
+            </Text>
           </View>
-        </View>
-      )}
+        ))}
+
+        {/* Typing indicator */}
+        {isThinking && (
+          <View style={[styles.bubble, styles.jarvisBubble]}>
+            <Text style={styles.bubbleLabel}>◈ JARVIS</Text>
+            <View style={styles.thinkingRow}>
+              <ActivityIndicator size="small" color={BLUE} />
+              <Text style={styles.thinkingText}>Думаю...</Text>
+            </View>
+          </View>
+        )}
+      </ScrollView>
 
       {/* Input */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={88}
-      >
-        <View style={styles.inputArea}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-            placeholder="Спроси Jarvis..."
-            placeholderTextColor="#3A4456"
-            multiline
-            maxLength={500}
-            onSubmitEditing={() => sendMessage(input)}
-            blurOnSubmit={false}
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, { opacity: input.trim() ? 1 : 0.4 }]}
-            onPress={() => sendMessage(input)}
-            disabled={!input.trim() || bridgeState === 'thinking'}
-          >
-            {bridgeState === 'thinking'
-              ? <ActivityIndicator color="#000" size="small" />
-              : <Text style={styles.sendIcon}>↑</Text>
-            }
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-
-    </SafeAreaView>
+      <View style={styles.inputBar}>
+        <TextInput
+          style={styles.input}
+          value={inputText}
+          onChangeText={setInputText}
+          placeholder="Напиши Jarvis..."
+          placeholderTextColor="#4B5563"
+          returnKeyType="send"
+          onSubmitEditing={sendMessage}
+          multiline={false}
+          autoCorrect={false}
+        />
+        <TouchableOpacity
+          style={[styles.sendBtn, !inputText.trim() && styles.sendBtnDisabled]}
+          onPress={sendMessage}
+          disabled={!inputText.trim()}
+        >
+          <Text style={styles.sendIcon}>▶</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
   );
 };
 
-const BG      = '#040810';
-const CARD    = 'rgba(10,14,26,0.95)';
-const BORDER  = 'rgba(0,194,255,0.12)';
-const CYAN    = '#00C2FF';
-const TEXT    = '#E8EDF5';
-const MUTED   = '#3A4456';
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: BG },
-
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
+  container: {
+    flex: 1,
+    backgroundColor: DARK_BG,
   },
-  title: { fontSize: 16, fontWeight: '700', color: TEXT, letterSpacing: 2 },
-  titleAccent: { color: CYAN },
+
+  // Header
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 56,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1A1A2E',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerIcon: {
+    fontSize: 24,
+    color: BLUE,
+  },
+  headerTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#F9FAFB',
+    letterSpacing: 1.5,
+  },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 6,
+    gap: 5,
+    marginTop: 2,
   },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 11, fontWeight: '600', letterSpacing: 1 },
-  reconnectBtn: {
-    marginLeft: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: BORDER,
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
-  reconnectText: { color: CYAN, fontSize: 11 },
-
-  listContent: { paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
-
-  msgRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 4 },
-  msgRowUser:   { justifyContent: 'flex-end' },
-  msgRowJarvis: { justifyContent: 'flex-start' },
-
-  jarvisLabel: { color: CYAN, fontSize: 14, marginBottom: 4 },
-
-  bubble: {
-    maxWidth: '78%',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  dotGreen: { backgroundColor: '#10B981' },
+  dotRed: { backgroundColor: '#EF4444' },
+  statusText: {
+    fontSize: 10,
+    color: '#6B7280',
   },
-  bubbleUser: {
-    backgroundColor: '#00C2FF',
-    borderBottomRightRadius: 4,
+  clearBtn: {
+    padding: 8,
   },
-  bubbleJarvis: {
-    backgroundColor: CARD,
-    borderWidth: 1,
-    borderColor: 'rgba(0,194,255,0.18)',
-    borderBottomLeftRadius: 4,
+  clearText: {
+    fontSize: 20,
   },
-  bubbleText: { fontSize: 15, lineHeight: 22 },
-  bubbleTextUser:   { color: '#000', fontWeight: '500' },
-  bubbleTextJarvis: { color: TEXT },
 
-  systemMsgRow: { alignItems: 'center', marginVertical: 4 },
-  systemMsg: { color: MUTED, fontSize: 11, fontStyle: 'italic' },
-
-  typingRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 8,
-    paddingHorizontal: 16,
+  // Messages
+  messageList: {
+    flex: 1,
+  },
+  messageContent: {
+    padding: 16,
     paddingBottom: 8,
   },
-  typingBubble: {
-    flexDirection: 'row',
-    gap: 4,
-    backgroundColor: CARD,
-    borderWidth: 1,
-    borderColor: 'rgba(0,194,255,0.18)',
-    borderRadius: 18,
-    borderBottomLeftRadius: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+
+  // Bubbles
+  bubble: {
+    maxWidth: '85%',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
   },
-  typingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: CYAN,
+  jarvisBubble: {
+    backgroundColor: JARVIS_BUBBLE,
+    alignSelf: 'flex-start',
+    borderBottomLeftRadius: 4,
+  },
+  userBubble: {
+    backgroundColor: USER_BUBBLE,
+    alignSelf: 'flex-end',
+    borderBottomRightRadius: 4,
+  },
+  bubbleLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: BLUE,
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  bubbleLabelUser: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.5)',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  bubbleText: {
+    fontSize: 15,
+    color: '#E5E7EB',
+    lineHeight: 22,
+  },
+  userBubbleText: {
+    color: '#FFFFFF',
+  },
+  timestamp: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.2)',
+    marginTop: 6,
+    textAlign: 'right',
   },
 
-  inputArea: {
+  // Thinking
+  thinkingRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    alignItems: 'center',
+    gap: 8,
+  },
+  thinkingText: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontStyle: 'italic',
+  },
+
+  // Input bar
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingBottom: 34, // Safe area
     borderTopWidth: 1,
-    borderTopColor: BORDER,
-    backgroundColor: 'rgba(4,8,16,0.95)',
+    borderTopColor: '#1A1A2E',
+    backgroundColor: '#0D0D15',
+    gap: 8,
   },
   input: {
     flex: 1,
-    backgroundColor: CARD,
-    borderRadius: 22,
+    backgroundColor: CARD_BG,
+    borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    color: TEXT,
+    color: '#F9FAFB',
     fontSize: 15,
-    maxHeight: 100,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: '#1F2937',
   },
   sendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: CYAN,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: BLUE,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  sendIcon: { color: '#000', fontSize: 20, fontWeight: '700', marginTop: -2 },
+  sendBtnDisabled: {
+    backgroundColor: '#1F2937',
+  },
+  sendIcon: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginLeft: 2,
+  },
 });
