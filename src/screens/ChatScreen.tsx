@@ -39,11 +39,12 @@ export const ChatScreen = () => {
 
   // ─── Connect to Bridge ────────────────────────────────────
   useEffect(() => {
+    // Async connect — loads bridge URL from AsyncStorage
     agentBridgeService.connect((connected) => {
       setIsConnected(connected);
     });
 
-    // Listen for responses
+    // Listen for Jarvis responses
     const handleResponse = (data: any) => {
       const msg: Message = {
         id: `j_${Date.now()}`,
@@ -90,9 +91,10 @@ export const ChatScreen = () => {
     Keyboard.dismiss();
 
     if (isConnected) {
-      agentBridgeService.send('chat', { text });
+      // Use correct bridge protocol: { type: "message", text }
+      agentBridgeService.sendToJarvis(text);
     } else {
-      // Offline fallback message
+      // Offline fallback
       setTimeout(() => {
         setMessages(prev => [...prev, {
           id: `j_${Date.now()}`,
@@ -106,6 +108,7 @@ export const ChatScreen = () => {
 
   // ─── Clear History ────────────────────────────────────────
   const clearChat = useCallback(() => {
+    agentBridgeService.clearHistory();
     setMessages([{
       id: 'cleared',
       role: 'assistant',
@@ -341,7 +344,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    paddingBottom: 34, // Safe area
+    paddingBottom: 34,
     borderTopWidth: 1,
     borderTopColor: '#1A1A2E',
     backgroundColor: '#0D0D15',
