@@ -1,11 +1,16 @@
 /**
- * AgentBridge Service — WebSocket клиент для iOS
- * Соединяет приложение с агент-системой workspace
+ * AgentBridgeService v2 — WebSocket клиент для iOS
+ * Соединяет приложение с jarvis_ios_bridge.py (порт 8766)
+ *
+ * Протокол бриджа:
+ *   Send:    { type: "message", text: "..." }
+ *   Receive: { type: "response", text: "...", state: "speaking" }
+ *            { type: "state", state: "thinking"|"idle" }
+ *            { type: "connected", message: "...", bore_url: "..." }
+ *            { type: "pong", ts: ..., clients: ..., queries: ... }
  */
 
-import { BACKEND_URL_DEFAULT } from '../utils/config';
-
-const WS_URL = BACKEND_URL_DEFAULT;
+import { getBridgeUrl, BRIDGE_URL_DEFAULT } from '../utils/config';
 
 type MessageHandler = (data: any) => void;
 type StatusHandler = (connected: boolean) => void;
@@ -34,19 +39,27 @@ export class AgentBridgeService {
   private isConnected = false;
   private pendingRequests: Map<string, (data: any) => void> = new Map();
   private reqIdCounter = 0;
+  private currentUrl: string = BRIDGE_URL_DEFAULT;
 
   /**
-   * Подключиться к Agent Bridge
+   * Подключиться к Jarvis Bridge
+   * Загружает URL из AsyncStorage (настройки)
    */
-  connect(onStatusChange?: StatusHandler): void {
+  async connect(onStatusChange?: StatusHandler): Promise<void> {
     this.onStatusChange = onStatusChange ?? null;
+    // Load saved bridge URL from settings
+    try {
+      this.currentUrl = await getBridgeUrl();
+    } catch {
+      this.currentUrl = BRIDGE_URL_DEFAULT;
+    }
     this.doConnect();
   }
 
   private doConnect(): void {
     try {
-      console.log('[Bridge] Connecting to:', WS_URL);
-      this.ws = new WebSocket(WS_URL);
+      console.log('[Bridge] Connecting to:', this.currentUrl);
+      this.ws = new WebSocket(this.currentUrl);
 
       this.ws.onopen = () => {
         this.isConnected = true;
@@ -87,11 +100,11 @@ export class AgentBridgeService {
   private handleMessage(data: any): void {
     const type = data.type as string;
 
-    // Вызвать обработчики по типу
+    // Route to type-specific handlers
     const handlers = this.messageHandlers.get(type) ?? [];
     handlers.forEach(h => h(data));
 
-    // Общий обработчик
+    // Wildcard handlers
     const allHandlers = this.messageHandlers.get('*') ?? [];
     allHandlers.forEach(h => h(data));
   }
@@ -105,7 +118,56 @@ export class AgentBridgeService {
   }
 
   /**
-   * Отправить команду и получить ответ
+   * Отправить текст в Jarvis Bridge
+   * Использует протокол jarvis_ios_bridge.py: { type, text }
+   */
+  sendToJarvis(text: string): void {
+    if (!this.ws || !this.isConnected) {
+      console.warn('[Bridge] Not connected — cannot send message');
+      return;
+    }
+    const message = { type: 'message', text };
+    this.ws.send(JSON.stringify(message));
+  }
+
+  /**
+   * Голосовой ввод — отдельный тип для аналитики на бридже
+   */
+  sendVoiceToJarvis(text: string): void {
+    if (!this.ws || !this.isConnected) {
+      console.warn('[Bridge] Not connected — cannot send voice');
+      return;
+    }
+    this.ws.send(JSON.stringify({ type: 'voice', text }));
+  }
+
+  /**
+   * Пинг бриджа
+   */
+  ping(): void {
+    if (!this.ws || !this.isConnected) return;
+    this.ws.send(JSON.stringify({ type: 'ping' }));
+  }
+
+  /**
+   * Очистить историю диалога на стороне бриджа
+   */
+  clearHistory(): void {
+    if (!this.ws || !this.isConnected) return;
+    this.ws.send(JSON.stringify({ type: 'clear_history' }));
+  }
+
+  /**
+   * Получить статус бриджа
+   */
+  getStatus(): void {
+    if (!this.ws || !this.isConnected) return;
+    this.ws.send(JSON.stringify({ type: 'get_status' }));
+  }
+
+  /**
+   * Legacy метод для совместимости с Agent Backend (порт 8000)
+   * Использует старый протокол { command, payload }
    */
   async send(command: string, payload: any = {}): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -117,7 +179,6 @@ export class AgentBridgeService {
       const message = { command, payload };
       this.ws.send(JSON.stringify(message));
 
-      // Ждём ответ нужного типа
       const responseType = this.getResponseType(command);
       const handler: MessageHandler = (data) => {
         if (data.type === responseType || data.type === 'error') {
@@ -131,7 +192,6 @@ export class AgentBridgeService {
       this.on(responseType, handler);
       this.on('error', handler);
 
-      // Таймаут 10 сек
       setTimeout(() => {
         this.off(responseType, handler);
         reject(new Error('Timeout'));
@@ -152,7 +212,7 @@ export class AgentBridgeService {
     return map[command] ?? command;
   }
 
-  // ─── Высокоуровневые методы ───────────────────────────────────
+  // ─── High-level agent methods ──────────────────────────────
 
   async getSystemStatus(): Promise<SystemStatus> {
     const res = await this.send('system_status');
@@ -169,28 +229,12 @@ export class AgentBridgeService {
     return res.data?.message ?? 'Отправлено';
   }
 
-  async addPost(title: string, caption: string): Promise<string> {
-    const scheduled = new Date();
-    scheduled.setHours(20, 0, 0, 0);
-    const res = await this.send('add_post', {
-      title,
-      caption,
-      scheduled_for: scheduled.toISOString(),
-    });
-    return res.data?.id ?? '';
-  }
-
   async getTodayMemory(): Promise<string> {
     const res = await this.send('get_today_memory');
     return res.data?.content ?? '';
   }
 
-  async getRecentResults(): Promise<any[]> {
-    const res = await this.send('get_results', { limit: 5 });
-    return res.data ?? [];
-  }
-
-  // ─── Event emitter ────────────────────────────────────────────
+  // ─── Event emitter ─────────────────────────────────────────
 
   on(type: string, handler: MessageHandler): void {
     const handlers = this.messageHandlers.get(type) ?? [];
@@ -212,6 +256,14 @@ export class AgentBridgeService {
     this.ws?.close();
     this.ws = null;
     this.isConnected = false;
+  }
+
+  /**
+   * Переподключиться с новым URL (вызывать после смены Bridge URL в настройках)
+   */
+  async reconnectWithNewUrl(): Promise<void> {
+    this.disconnect();
+    await this.connect(this.onStatusChange ?? undefined);
   }
 
   get connected(): boolean {
