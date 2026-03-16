@@ -3,9 +3,9 @@
  * Соединяет приложение с агент-системой workspace
  */
 
-import { BACKEND_URL } from '../utils/config';
+import { BACKEND_URL_DEFAULT } from '../utils/config';
 
-const WS_URL = BACKEND_URL.replace('http', 'ws').replace('8000', '8766');
+const WS_URL = BACKEND_URL_DEFAULT;
 
 type MessageHandler = (data: any) => void;
 type StatusHandler = (connected: boolean) => void;
