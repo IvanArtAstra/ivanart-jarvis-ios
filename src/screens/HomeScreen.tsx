@@ -1,5 +1,6 @@
 /**
- * HomeScreen v3 — с Always-On режимом и wake word индикатором
+ * HomeScreen v4 — Jarvis HUD Design
+ * Cyan accent, glassmorphism cards, premium dark theme
  */
 
 import React, { useState } from 'react';
@@ -13,6 +14,7 @@ import {
   Animated,
   Switch,
   Modal,
+  ScrollView,
 } from 'react-native';
 import { SettingsScreen } from './SettingsScreen';
 import { useJarvis, AppState, ListenMode } from '../hooks/useJarvis';
@@ -21,27 +23,36 @@ const STATE_LABELS: Record<AppState, string> = {
   idle:        'Нажми и говори',
   wake_listen: 'Слушаю... скажи "Джарвис"',
   listening:   'Слушаю запрос...',
-  thinking:    'Думаю...',
-  speaking:    'Говорю...',
+  thinking:    'Обрабатываю...',
+  speaking:    'Отвечаю...',
   error:       'Ошибка — попробуй снова',
 };
 
 const STATE_ICONS: Record<AppState, string> = {
-  idle:        '🎙️',
+  idle:        '🎙',
   wake_listen: '👂',
-  listening:   '🔴',
-  thinking:    '🧠',
-  speaking:    '🔊',
-  error:       '⚠️',
+  listening:   '●',
+  thinking:    '◈',
+  speaking:    '◉',
+  error:       '⚠',
 };
 
 const STATE_COLORS: Record<AppState, string> = {
-  idle:        '#3B82F6',
+  idle:        '#00C2FF',
   wake_listen: '#6B7280',
-  listening:   '#DC2626',
-  thinking:    '#7C3AED',
-  speaking:    '#059669',
+  listening:   '#FF3B3B',
+  thinking:    '#A855F7',
+  speaking:    '#00D4A0',
   error:       '#374151',
+};
+
+const STATE_GLOW: Record<AppState, string> = {
+  idle:        'rgba(0,194,255,0.35)',
+  wake_listen: 'rgba(107,114,128,0.25)',
+  listening:   'rgba(255,59,59,0.40)',
+  thinking:    'rgba(168,85,247,0.40)',
+  speaking:    'rgba(0,212,160,0.40)',
+  error:       'rgba(55,65,81,0.20)',
 };
 
 export const HomeScreen = () => {
@@ -62,16 +73,19 @@ export const HomeScreen = () => {
   } = useJarvis();
 
   const [showSettings, setShowSettings] = useState(false);
-  const pulseAnim = React.useRef(new Animated.Value(1)).current;
-  const waveAnim = React.useRef(new Animated.Value(0)).current;
-  const isActive = !['idle', 'error'].includes(appState);
+  const pulseAnim   = React.useRef(new Animated.Value(1)).current;
+  const ringAnim    = React.useRef(new Animated.Value(0)).current;
+  const waveAnim    = React.useRef(new Animated.Value(0)).current;
+  const glowAnim    = React.useRef(new Animated.Value(0.5)).current;
+  const isActive    = !['idle', 'error'].includes(appState);
 
+  // Пульс кнопки
   React.useEffect(() => {
     if (isActive) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.12, duration: 800, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1.0, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.08, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.00, duration: 700, useNativeDriver: true }),
         ])
       ).start();
     } else {
@@ -79,357 +93,529 @@ export const HomeScreen = () => {
     }
   }, [isActive]);
 
-  // Волна при wake_listen
+  // Внешнее кольцо
+  React.useEffect(() => {
+    Animated.loop(
+      Animated.timing(ringAnim, { toValue: 1, duration: 2400, useNativeDriver: true })
+    ).start();
+  }, []);
+
+  // Волна wake
   React.useEffect(() => {
     if (appState === 'wake_listen') {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(waveAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
-          Animated.timing(waveAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
+          Animated.timing(waveAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+          Animated.timing(waveAnim, { toValue: 0, duration: 1000, useNativeDriver: true }),
         ])
       ).start();
-    } else {
-      waveAnim.setValue(0);
-    }
+    } else { waveAnim.setValue(0); }
   }, [appState]);
 
-  const handleVoiceButton = () => {
-    if (appState === 'listening') {
-      stopListening();
-    } else if (appState === 'idle') {
-      startVoiceInteraction();
-    }
-  };
+  // Glow пульс фона
+  React.useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, { toValue: 1, duration: 3000, useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 0.4, duration: 3000, useNativeDriver: true }),
+      ])
+    ).start();
+  }, []);
 
-  const handleModeToggle = (value: boolean) => {
-    setListenMode(value ? 'always_on' : 'manual');
+  const handleVoiceButton = () => {
+    if (appState === 'listening')      { stopListening(); }
+    else if (appState === 'idle')      { startVoiceInteraction(); }
   };
 
   const btnDisabled = ['thinking', 'speaking', 'wake_listen'].includes(appState);
+  const activeColor = STATE_COLORS[appState];
+  const activeGlow  = STATE_GLOW[appState];
 
   return (
     <SafeAreaView style={styles.container}>
+
+      {/* Ambient glow background */}
+      <Animated.View style={[styles.ambientGlow, { opacity: glowAnim, shadowColor: activeColor }]} />
 
       {/* Settings Modal */}
       <Modal visible={showSettings} animationType="slide" presentationStyle="fullScreen">
         <SettingsScreen onClose={() => setShowSettings(false)} />
       </Modal>
 
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <Text style={styles.title}>IvanArt × Jarvis</Text>
-          <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.settingsBtn}>
-            <Text style={styles.settingsIcon}>⚙️</Text>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
+        {/* ── HEADER ── */}
+        <View style={styles.header}>
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.title}>
+                IvanArt <Text style={styles.titleAccent}>×</Text> Jarvis
+              </Text>
+              <Text style={styles.subtitle}>Два разума, одни очки</Text>
+            </View>
+            <View style={styles.headerRight}>
+              {sessionCount > 0 && (
+                <View style={styles.sessionBadge}>
+                  <Text style={styles.sessionBadgeText}>{sessionCount}</Text>
+                </View>
+              )}
+              <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.settingsBtn}>
+                <Text style={styles.settingsIcon}>⚙️</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Status bar */}
+          <View style={styles.statusBar}>
+            <View style={[styles.statusDot, { backgroundColor: activeColor }]} />
+            <Text style={[styles.statusText, { color: activeColor }]}>
+              {STATE_LABELS[appState].toUpperCase()}
+            </Text>
+          </View>
+        </View>
+
+        {/* ── CARDS ROW ── */}
+        <View style={styles.cardsRow}>
+          {/* Mode Toggle */}
+          <View style={[styles.miniCard, { flex: 1, marginRight: 8 }]}>
+            <Text style={styles.miniCardLabel}>РЕЖИМ</Text>
+            <View style={styles.switchRow}>
+              <Text style={styles.miniCardValue}>
+                {listenMode === 'always_on' ? '🟢 Always-On' : '⚪ Ручной'}
+              </Text>
+              <Switch
+                value={listenMode === 'always_on'}
+                onValueChange={(v) => setListenMode(v ? 'always_on' : 'manual')}
+                trackColor={{ false: '#1A2030', true: '#003A5C' }}
+                thumbColor={listenMode === 'always_on' ? '#00C2FF' : '#4B5563'}
+                ios_backgroundColor="#1A2030"
+                style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+              />
+            </View>
+          </View>
+
+          {/* Ray-Ban Status */}
+          <TouchableOpacity
+            style={[styles.miniCard, { flex: 1 }]}
+            onPress={isGlassesConnected ? disconnectGlasses : connectGlasses}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.miniCardLabel}>RAY-BAN</Text>
+            <View style={styles.switchRow}>
+              <Text style={styles.miniCardValue}>
+                {isGlassesConnected ? '🕶️ ON' : '🕶️ OFF'}
+              </Text>
+              <View style={[styles.connDot, { backgroundColor: isGlassesConnected ? '#00D4A0' : '#374151' }]} />
+            </View>
           </TouchableOpacity>
         </View>
-        <View style={styles.headerRow}>
-          <Text style={styles.subtitle}>Два разума, одни очки ⚡</Text>
-          {sessionCount > 0 && (
-            <View style={styles.sessionBadge}>
-              <Text style={styles.sessionBadgeText}>{sessionCount}</Text>
+
+        {/* ── RESPONSE CARD ── */}
+        <View style={[styles.responseCard, { borderLeftColor: activeColor }]}>
+          <View style={styles.responseHeader}>
+            <Text style={[styles.responseLabel, { color: activeColor }]}>◈ JARVIS</Text>
+            {appState === 'thinking' && (
+              <View style={styles.thinkingDots}>
+                {[0, 1, 2].map(i => (
+                  <Animated.View key={i} style={[styles.dot, {
+                    opacity: waveAnim.interpolate({ inputRange: [0, 1], outputRange: [0.3 + i * 0.2, 1] })
+                  }]} />
+                ))}
+              </View>
+            )}
+          </View>
+
+          {partialText && (appState === 'listening' || appState === 'wake_listen') ? (
+            <Text style={styles.partialText}>{partialText}</Text>
+          ) : (
+            <Text style={styles.responseText}>
+              {error ?? lastResponse ?? 'Jarvis готов. Скажи "Джарвис" или нажми кнопку.'}
+            </Text>
+          )}
+
+          {lastQuery && appState === 'idle' && (
+            <View style={styles.queryRow}>
+              <Text style={styles.queryLabel}>ТЫ: </Text>
+              <Text style={styles.queryText}>"{lastQuery}"</Text>
             </View>
           )}
         </View>
-      </View>
 
-      {/* Always-On Toggle */}
-      <View style={styles.modeCard}>
-        <View style={styles.modeInfo}>
-          <Text style={styles.modeTitle}>
-            {listenMode === 'always_on' ? '🟢 Always-On режим' : '⚪ Ручной режим'}
-          </Text>
-          <Text style={styles.modeSubtitle}>
-            {listenMode === 'always_on'
-              ? 'Скажи "Джарвис" в любой момент'
-              : 'Нажми кнопку чтобы говорить'}
-          </Text>
-        </View>
-        <Switch
-          value={listenMode === 'always_on'}
-          onValueChange={handleModeToggle}
-          trackColor={{ false: '#1F2937', true: '#1D4ED8' }}
-          thumbColor={listenMode === 'always_on' ? '#3B82F6' : '#6B7280'}
-          ios_backgroundColor="#1F2937"
-        />
-      </View>
-
-      {/* Ray-Ban статус */}
-      <TouchableOpacity
-        style={styles.glassesCard}
-        onPress={isGlassesConnected ? disconnectGlasses : connectGlasses}
-        activeOpacity={0.8}
-      >
-        <View style={[styles.statusDot, isGlassesConnected ? styles.dotGreen : styles.dotRed]} />
-        <View style={styles.glassesInfo}>
-          <Text style={styles.glassesTitle}>
-            {isGlassesConnected ? '🕶️ Ray-Ban подключены' : '🕶️ Ray-Ban не подключены'}
-          </Text>
-          <Text style={styles.glassesSubtitle}>
-            {isGlassesConnected
-              ? 'TTS через динамики очков'
-              : 'Нажми чтобы подключить'}
-          </Text>
-        </View>
-        <Text style={styles.glassesArrow}>{isGlassesConnected ? '✓' : '›'}</Text>
-      </TouchableOpacity>
-
-      {/* Частичное распознавание (реалтайм) */}
-      {(appState === 'listening' || appState === 'wake_listen') && partialText ? (
-        <View style={styles.partialCard}>
-          <Text style={styles.partialText}>{partialText}</Text>
-        </View>
-      ) : null}
-
-      {/* Последний запрос */}
-      {lastQuery && appState !== 'listening' ? (
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>ТЫ СКАЗАЛ</Text>
-          <Text style={styles.queryText}>"{lastQuery}"</Text>
-        </View>
-      ) : null}
-
-      {/* Ответ Jarvis */}
-      <View style={[styles.card, styles.responseCard]}>
-        <Text style={styles.cardLabel}>JARVIS</Text>
-        <Text style={styles.responseText}>{error ?? lastResponse}</Text>
-      </View>
-
-      {/* Wake word волновой индикатор */}
-      {appState === 'wake_listen' && (
-        <View style={styles.waveContainer}>
-          {[0, 1, 2, 3, 4].map((i) => (
-            <Animated.View
-              key={i}
-              style={[
-                styles.waveBar,
-                {
-                  opacity: waveAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.2 + i * 0.1, 0.8 - i * 0.05],
-                  }),
+        {/* ── WAVE BARS (wake_listen) ── */}
+        {appState === 'wake_listen' && (
+          <View style={styles.waveContainer}>
+            {[0.5, 0.8, 1.2, 0.8, 0.5, 1.0, 0.6].map((h, i) => (
+              <Animated.View
+                key={i}
+                style={[styles.waveBar, {
+                  backgroundColor: activeColor,
                   transform: [{
                     scaleY: waveAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [0.4 + i * 0.2, 1.0 + i * 0.3],
+                      outputRange: [h * 0.4, h * 1.4],
                     }),
                   }],
-                },
-              ]}
-            />
-          ))}
-        </View>
-      )}
+                  opacity: waveAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.4, 0.95],
+                  }),
+                }]}
+              />
+            ))}
+          </View>
+        )}
+      </ScrollView>
 
-      {/* Кнопка голоса (только в ручном режиме или для прерывания) */}
-      {listenMode === 'manual' && (
-        <View style={styles.voiceSection}>
-          <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-            <TouchableOpacity
-              style={[styles.voiceButton, { backgroundColor: STATE_COLORS[appState] }]}
-              onPress={handleVoiceButton}
-              disabled={btnDisabled}
-              activeOpacity={0.85}
-            >
-              {appState === 'thinking' ? (
-                <ActivityIndicator color="#fff" size="large" />
-              ) : (
-                <Text style={styles.voiceIcon}>{STATE_ICONS[appState]}</Text>
-              )}
-            </TouchableOpacity>
-          </Animated.View>
+      {/* ── VOICE BUTTON AREA (sticky bottom) ── */}
+      <View style={styles.voiceArea}>
+        {listenMode === 'manual' && (
+          <>
+            {/* Outer ring */}
+            <Animated.View style={[styles.outerRing, {
+              borderColor: activeColor,
+              opacity: ringAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.15, 0.4, 0.15] }),
+              transform: [{ scale: ringAnim.interpolate({ inputRange: [0, 1], outputRange: [1.0, 1.25] }) }],
+            }]} />
 
-          <Text style={styles.stateLabel}>{STATE_LABELS[appState]}</Text>
+            {/* Middle ring */}
+            <Animated.View style={[styles.middleRing, {
+              borderColor: activeColor,
+              opacity: isActive ? 0.5 : 0.25,
+              transform: [{ scale: pulseAnim.interpolate({ inputRange: [1, 1.08], outputRange: [1.12, 1.20] }) }],
+            }]} />
 
-          {appState === 'listening' && (
-            <TouchableOpacity onPress={stopListening} style={styles.cancelBtn}>
-              <Text style={styles.cancelBtnText}>Отмена</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
+            {/* Main button */}
+            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+              <TouchableOpacity
+                style={[styles.voiceButton, {
+                  backgroundColor: btnDisabled ? '#0A0E1A' : activeColor,
+                  shadowColor: activeGlow,
+                }]}
+                onPress={handleVoiceButton}
+                disabled={btnDisabled}
+                activeOpacity={0.85}
+              >
+                {appState === 'thinking' ? (
+                  <ActivityIndicator color={activeColor} size="large" />
+                ) : (
+                  <Text style={[styles.voiceIcon, { color: btnDisabled ? activeColor : '#000' }]}>
+                    {STATE_ICONS[appState]}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </Animated.View>
 
-      {/* Always-On статус */}
-      {listenMode === 'always_on' && (
-        <View style={styles.alwaysOnStatus}>
-          <Text style={styles.alwaysOnIcon}>{STATE_ICONS[appState]}</Text>
-          <Text style={styles.alwaysOnLabel}>{STATE_LABELS[appState]}</Text>
-        </View>
-      )}
+            {appState === 'listening' && (
+              <TouchableOpacity onPress={stopListening} style={styles.cancelBtn}>
+                <Text style={styles.cancelBtnText}>СТОП</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
+
+        {listenMode === 'always_on' && (
+          <View style={styles.alwaysOnRow}>
+            <Animated.View style={[styles.alwaysOnDot, {
+              backgroundColor: activeColor,
+              transform: [{ scale: pulseAnim }],
+              shadowColor: activeGlow,
+            }]} />
+            <Text style={[styles.alwaysOnLabel, { color: activeColor }]}>
+              {STATE_LABELS[appState]}
+            </Text>
+          </View>
+        )}
+      </View>
 
     </SafeAreaView>
   );
 };
 
-const BLUE = '#3B82F6';
-const DARK_BG = '#0A0A0F';
-const CARD_BG = '#13131F';
+// ── DESIGN TOKENS ──
+const BG       = '#040810';
+const CARD_BG  = 'rgba(10,14,26,0.95)';
+const BORDER   = 'rgba(0,194,255,0.12)';
+const CYAN     = '#00C2FF';
+const TEXT     = '#E8EDF5';
+const MUTED    = '#3A4456';
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: DARK_BG,
+    backgroundColor: BG,
+  },
+  scroll: {
     paddingHorizontal: 20,
+    paddingBottom: 160,
   },
+  ambientGlow: {
+    position: 'absolute',
+    top: -60,
+    alignSelf: 'center',
+    width: 340,
+    height: 340,
+    borderRadius: 170,
+    backgroundColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 90,
+  },
+
+  // ── HEADER ──
   header: {
-    paddingTop: 28,
-    paddingBottom: 20,
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
+    paddingTop: 24,
+    paddingBottom: 16,
   },
   headerRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: TEXT,
+    letterSpacing: -0.5,
+  },
+  titleAccent: {
+    color: CYAN,
+    fontWeight: '300',
+  },
+  subtitle: {
+    fontSize: 13,
+    color: MUTED,
+    marginTop: 2,
+    letterSpacing: 0.3,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sessionBadge: {
+    backgroundColor: 'rgba(0,194,255,0.15)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0,194,255,0.3)',
+  },
+  sessionBadgeText: { color: CYAN, fontSize: 12, fontWeight: '700' },
+  settingsBtn: { padding: 4 },
+  settingsIcon: { fontSize: 20 },
+
+  statusBar: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginTop: 16,
+    backgroundColor: CARD_BG,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: BORDER,
+  },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+  },
+
+  // ── MINI CARDS ──
+  cardsRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
     marginTop: 4,
   },
-  subtitle: { fontSize: 13, color: '#4B5563' },
-  sessionBadge: {
-    backgroundColor: '#1D4ED8',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  sessionBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-
-  // Mode toggle
-  modeCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  miniCard: {
     backgroundColor: CARD_BG,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
-    borderColor: '#1F2937',
+    borderColor: BORDER,
   },
-  modeInfo: { flex: 1 },
-  modeTitle: { color: '#F9FAFB', fontSize: 15, fontWeight: '600' },
-  modeSubtitle: { color: '#6B7280', fontSize: 12, marginTop: 2 },
-
-  // Glasses card
-  glassesCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: CARD_BG,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-  },
-  statusDot: { width: 9, height: 9, borderRadius: 5, marginRight: 12 },
-  dotGreen: { backgroundColor: '#10B981' },
-  dotRed: { backgroundColor: '#374151' },
-  glassesInfo: { flex: 1 },
-  glassesTitle: { color: '#F9FAFB', fontSize: 15, fontWeight: '600' },
-  glassesSubtitle: { color: '#6B7280', fontSize: 12, marginTop: 2 },
-  glassesArrow: { color: '#374151', fontSize: 20 },
-
-  // Partial text
-  partialCard: {
-    backgroundColor: '#0F1117',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-    borderStyle: 'dashed',
-  },
-  partialText: { color: '#6B7280', fontSize: 14, fontStyle: 'italic' },
-
-  // Cards
-  card: {
-    backgroundColor: CARD_BG,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-  },
-  responseCard: {
-    flex: 1,
-    borderLeftWidth: 2,
-    borderLeftColor: BLUE,
-  },
-  cardLabel: {
-    fontSize: 10,
+  miniCardLabel: {
+    fontSize: 9,
     fontWeight: '700',
     letterSpacing: 2,
-    color: '#374151',
+    color: MUTED,
     marginBottom: 8,
   },
-  queryText: { color: '#9CA3AF', fontSize: 15, fontStyle: 'italic', lineHeight: 22 },
-  responseText: { color: '#F9FAFB', fontSize: 17, lineHeight: 28 },
+  miniCardValue: {
+    color: TEXT,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  connDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
 
-  // Wave bars (wake listen)
+  // ── RESPONSE CARD ──
+  responseCard: {
+    backgroundColor: CARD_BG,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderLeftWidth: 2,
+    minHeight: 160,
+    marginBottom: 12,
+  },
+  responseHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 14,
+  },
+  responseLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2.5,
+  },
+  thinkingDots: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: CYAN,
+  },
+  responseText: {
+    color: TEXT,
+    fontSize: 17,
+    lineHeight: 27,
+    fontWeight: '400',
+  },
+  partialText: {
+    color: MUTED,
+    fontSize: 15,
+    lineHeight: 24,
+    fontStyle: 'italic',
+  },
+  queryRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  queryLabel: { color: MUTED, fontSize: 12, fontWeight: '600' },
+  queryText: { color: MUTED, fontSize: 13, fontStyle: 'italic', flex: 1 },
+
+  // ── WAVE BARS ──
   waveContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    height: 40,
-    gap: 5,
+    height: 44,
+    gap: 4,
     marginBottom: 8,
   },
   waveBar: {
-    width: 4,
-    height: 24,
-    backgroundColor: '#3B82F6',
+    width: 3,
+    height: 28,
     borderRadius: 2,
   },
 
-  // Voice button
-  voiceSection: {
+  // ── VOICE AREA ──
+  voiceArea: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    paddingBottom: 40,
-    paddingTop: 16,
+    paddingBottom: 44,
+    paddingTop: 20,
+    backgroundColor: 'rgba(4,8,16,0.85)',
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
     gap: 12,
   },
+
+  outerRing: {
+    position: 'absolute',
+    width: 148,
+    height: 148,
+    borderRadius: 74,
+    borderWidth: 1,
+    top: '50%',
+    marginTop: -74,
+  },
+  middleRing: {
+    position: 'absolute',
+    width: 116,
+    height: 116,
+    borderRadius: 58,
+    borderWidth: 1,
+    top: '50%',
+    marginTop: -58,
+  },
+
   voiceButton: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 92,
+    height: 92,
+    borderRadius: 46,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: BLUE,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 10,
+    shadowOpacity: 1,
+    shadowRadius: 24,
+    elevation: 14,
   },
-  voiceIcon: { fontSize: 36 },
-  stateLabel: { color: '#6B7280', fontSize: 13 },
+  voiceIcon: {
+    fontSize: 32,
+    fontWeight: '300',
+  },
+
   cancelBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#374151',
+    borderColor: 'rgba(255,59,59,0.35)',
   },
-  cancelBtnText: { color: '#9CA3AF', fontSize: 14 },
-
-  // Always-On status
-  alwaysOnStatus: {
-    alignItems: 'center',
-    paddingBottom: 40,
-    paddingTop: 16,
-    gap: 8,
+  cancelBtnText: {
+    color: '#FF3B3B',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.5,
   },
-  alwaysOnIcon: { fontSize: 32 },
-  alwaysOnLabel: { color: '#6B7280', fontSize: 14 },
 
-  // Header extras
-  headerTopRow: {
+  // ── ALWAYS-ON ──
+  alwaysOnRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    width: '100%',
+    gap: 12,
   },
-  settingsBtn: { padding: 6 },
-  settingsIcon: { fontSize: 22 },
+  alwaysOnDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
+  },
+  alwaysOnLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
 });
