@@ -43,8 +43,6 @@
 	<string>Для связи с Ray-Ban через Bluetooth</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Jarvis делает фото по голосовой команде для анализа через AI-ассистент</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Jarvis слушает твои голосовые команды для управления через Ray-Ban очки</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
