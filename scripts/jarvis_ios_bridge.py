@@ -1,254 +1,125 @@
 #!/usr/bin/env python3
 """
-Jarvis iOS Bridge — WebSocket server :8766
-Connects iPhone app to Claude AI backend.
-Auto-creates bore.pub tunnel and notifies Telegram.
+Jarvis iOS Bridge v2 — WebSocket + OpenAI GPT-4
+Routes iOS app messages through local AI, no separate auth needed.
 
-Usage:
-  python scripts/jarvis_ios_bridge.py
-  python scripts/jarvis_ios_bridge.py --port 8766
+Usage: python scripts/jarvis_ios_bridge.py [--port 8766]
 """
-
-import asyncio
-import json
-import os
-import subprocess
-import sys
-import time
-import threading
-import argparse
-import re
-import urllib.request
-import urllib.parse
+import asyncio, json, os, sys, subprocess, re, threading, argparse
 from pathlib import Path
 
-try:
-    import websockets
-except ImportError:
-    print("Installing websockets...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "websockets"])
-    import websockets
+# Auto-install deps
+for pkg in ["websockets", "openai"]:
+    try: __import__(pkg.replace("-","_"))
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg, "-q"])
 
-try:
-    import anthropic
-except ImportError:
-    print("Installing anthropic...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "anthropic"])
-    import anthropic
+import websockets
+from openai import AsyncOpenAI
 
-# ── Config ──────────────────────────────────────────────────────────
+PORT      = 8766
 WORKSPACE = Path(__file__).parent.parent
-DEFAULT_PORT = 8766
-SYSTEM_PROMPT = """Ты Jarvis — ИИ-ассистент Ивана Артемьева (Sir Ivan).
-Работаешь через Ray-Ban Meta Smart Glasses и iOS приложение.
-Отвечай кратко (2-4 предложения), по делу, с лёгкой иронией Jarvis из Iron Man.
-Язык: русский, если не попросят иначе.
-Контекст: Sir Ivan — разработчик, строит систему Jarvis для умных очков Ray-Ban Meta."""
 
-# ── Telegram notify ──────────────────────────────────────────────────
-def get_telegram_token():
-    """Get bot token from openclaw.json."""
-    config_path = Path.home() / ".openclaw" / "openclaw.json"
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            import re
-            data = f.read()
-            # Find telegram token
-            match = re.search(r'"token"\s*:\s*"([^"]+)"', data)
-            if match:
-                return match.group(1)
-    except Exception:
-        pass
-    return os.environ.get("TELEGRAM_BOT_TOKEN", "")
+SYSTEM_PROMPT = """Ты Jarvis — персональный ИИ-ассистент Ивана Артемьева (Sir Ivan).
+Работаешь через Ray-Ban Meta Smart Glasses и iOS приложение IvanArt × Jarvis.
+Характер: спокойный, точный, с лёгкой иронией — как Jarvis из Iron Man.
+Отвечай кратко (2-4 предложения), по делу. Язык: русский, если не попросят иначе.
+Sir Ivan — разработчик, строит систему Jarvis для умных очков."""
 
-def notify_telegram(text: str, chat_id: str = "2146714203"):
-    token = get_telegram_token()
-    if not token:
-        print("[Telegram] No token found, skipping notification")
-        return
+# ── Telegram notify ────────────────────────────────────────────────
+def notify_telegram(text: str):
     try:
-        payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+        cfg = (Path.home() / ".openclaw" / "openclaw.json").read_text(encoding="utf-8")
+        token = re.search(r'"token"\s*:\s*"([^"]+Bot[^"]+)"', cfg)
+        if not token: return
+        import urllib.request
         req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data=payload.encode(),
+            f"https://api.telegram.org/bot{token.group(1)}/sendMessage",
+            data=json.dumps({"chat_id": "2146714203", "text": text}).encode(),
             headers={"Content-Type": "application/json"}
         )
-        urllib.request.urlopen(req, timeout=10)
-        print(f"[Telegram] Notified: {text[:60]}...")
+        urllib.request.urlopen(req, timeout=5)
     except Exception as e:
-        print(f"[Telegram] Failed: {e}")
+        print(f"[TG] {e}")
 
-# ── bore.pub tunnel ──────────────────────────────────────────────────
-bore_url = None
+# ── OpenAI client ──────────────────────────────────────────────────
+def get_client():
+    key = os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        cfg = (Path.home() / ".openclaw" / "openclaw.json").read_text(encoding="utf-8")
+        m = re.search(r'sk-proj-[A-Za-z0-9_\-]+', cfg)
+        key = m.group(0) if m else ""
+    return AsyncOpenAI(api_key=key) if key else None
 
-def start_bore_tunnel(port: int):
-    """Start bore.pub tunnel in background thread."""
-    global bore_url
-
-    def run():
-        global bore_url
-        try:
-            proc = subprocess.Popen(
-                ["bore", "local", str(port), "--to", "bore.pub"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
-            for line in proc.stdout:
-                line = line.strip()
-                print(f"[bore] {line}")
-                match = re.search(r'bore\.pub:(\d+)', line)
-                if match:
-                    bore_url = f"ws://bore.pub:{match.group(1)}"
-                    print(f"\n✅ TUNNEL READY: {bore_url}\n")
-                    msg = (
-                        f"🌐 <b>Jarvis iOS Bridge готов!</b>\n\n"
-                        f"📡 Tunnel URL:\n<code>{bore_url}</code>\n\n"
-                        f"Вставь в iOS → Настройки → Bridge URL"
-                    )
-                    notify_telegram(msg)
-            proc.wait()
-        except FileNotFoundError:
-            print("[bore] 'bore' not found. Install: cargo install bore-cli")
-            print(f"[Bridge] Running locally at: ws://localhost:{port}")
-            notify_telegram(
-                f"⚡ <b>Jarvis iOS Bridge запущен</b>\n\n"
-                f"📡 Tailscale: <code>ws://100.70.68.84:{port}</code>\n"
-                f"(bore не установлен — туннель недоступен)\n\n"
-                f"Убедись что iPhone в той же сети или используй Tailscale."
-            )
-        except Exception as e:
-            print(f"[bore] Error: {e}")
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-
-# ── Claude client ────────────────────────────────────────────────────
-def get_anthropic_key():
-    """Get API key from env or openclaw.json."""
-    key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if key:
-        return key
-    config_path = Path.home() / ".openclaw" / "openclaw.json"
+async def ask_ai(client, text: str, history: list) -> str:
+    if not client:
+        return "Ошибка: API ключ не найден."
+    msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+    msgs += history[-16:]
+    msgs.append({"role": "user", "content": text})
     try:
-        with open(config_path, encoding="utf-8") as f:
-            data = f.read()
-            match = re.search(r'sk-ant-[A-Za-z0-9\-_]+', data)
-            if match:
-                return match.group(0)
-    except Exception:
-        pass
-    return ""
-
-async def ask_claude(text: str, history: list) -> str:
-    """Send message to Claude and get response."""
-    api_key = get_anthropic_key()
-    if not api_key:
-        return "Ошибка: API ключ Anthropic не найден."
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    messages = history[-10:] + [{"role": "user", "content": text}]
-
-    try:
-        response = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=512,
-            system=SYSTEM_PROMPT,
-            messages=messages,
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=msgs,
+            max_tokens=400,
+            temperature=0.7,
         )
-        return response.content[0].text
+        return resp.choices[0].message.content
     except Exception as e:
-        return f"Ошибка Claude API: {str(e)[:100]}"
+        return f"Ошибка: {str(e)[:120]}"
 
-# ── WebSocket handler ────────────────────────────────────────────────
-connected_clients = set()
-
-async def handle_client(websocket):
-    """Handle a single iOS client connection."""
-    client_addr = websocket.remote_address
-    print(f"[Bridge] ✅ Client connected: {client_addr}")
-    connected_clients.add(websocket)
-
+# ── WebSocket handler ──────────────────────────────────────────────
+async def handle(ws):
+    addr = ws.remote_address
+    print(f"[+] {addr}")
+    client = get_client()
     history = []
-
     try:
-        await websocket.send(json.dumps({
-            "type": "connected",
-            "message": "Jarvis iOS Bridge подключён",
-            "bore_url": bore_url
-        }))
-
-        async for message in websocket:
+        await ws.send(json.dumps({"type": "connected", "message": "Jarvis Bridge v2 подключён ✅"}))
+        async for raw in ws:
             try:
-                data = json.loads(message)
-                msg_type = data.get("type", "")
-                text = data.get("text", "").strip()
-
-                if msg_type in ("voice", "text") and text:
-                    print(f"[Bridge] 📨 '{text}'")
-
-                    # State: thinking
-                    await websocket.send(json.dumps({
-                        "type": "state",
-                        "state": "thinking"
-                    }))
-
-                    # Ask Claude
-                    response = await ask_claude(text, history)
-
-                    # Update history
-                    history.append({"role": "user", "content": text})
-                    history.append({"role": "assistant", "content": response})
-
-                    # Send response
-                    await websocket.send(json.dumps({
-                        "type": "response",
-                        "text": response,
-                        "state": "idle"
-                    }))
-
-                    print(f"[Bridge] 💬 Response sent ({len(response)} chars)")
-
-                elif msg_type == "ping":
-                    await websocket.send(json.dumps({"type": "pong"}))
-
+                data = json.loads(raw)
+                t, text = data.get("type",""), data.get("text","").strip()
+                if t in ("voice","text","chat") and text:
+                    print(f"[iOS] {text}")
+                    await ws.send(json.dumps({"type":"state","state":"thinking"}))
+                    reply = await ask_ai(client, text, history)
+                    history += [{"role":"user","content":text},
+                                {"role":"assistant","content":reply}]
+                    if len(history) > 20: history = history[-20:]
+                    await ws.send(json.dumps({"type":"response","text":reply,"state":"idle"}))
+                    print(f"[J] {reply[:80]}")
+                elif t == "ping":
+                    await ws.send(json.dumps({"type":"pong"}))
             except json.JSONDecodeError:
-                await websocket.send(json.dumps({
-                    "type": "error",
-                    "message": "Invalid JSON"
-                }))
-
+                await ws.send(json.dumps({"type":"error","message":"Bad JSON"}))
     except websockets.exceptions.ConnectionClosed:
-        print(f"[Bridge] Client disconnected: {client_addr}")
+        pass
     finally:
-        connected_clients.discard(websocket)
+        print(f"[-] {addr}")
 
-# ── Main ─────────────────────────────────────────────────────────────
-async def main(port: int):
-    print(f"""
-╔══════════════════════════════════════╗
-║     Jarvis iOS Bridge v1.0           ║
-║     Port: {port}                       ║
-╚══════════════════════════════════════╝
-""")
+# ── Main ───────────────────────────────────────────────────────────
+async def main(port):
+    print(f"\n╔══════════════════════════════════════╗")
+    print(f"║  Jarvis iOS Bridge v2  ::{port}          ║")
+    print(f"╚══════════════════════════════════════╝\n")
+    client = get_client()
+    if client:
+        print(f"[AI] OpenAI GPT-4o-mini ✅")
+    else:
+        print(f"[AI] ⚠️  No API key found!")
 
-    # Start bore tunnel
-    start_bore_tunnel(port)
+    notify_telegram(f"🤖 <b>Jarvis iOS Bridge v2 запущен</b>\nПорт: {port}\nIP: 192.168.0.39:{port}")
 
-    # Start WebSocket server
-    async with websockets.serve(handle_client, "0.0.0.0", port):
-        print(f"[Bridge] 🚀 WebSocket server running on ws://0.0.0.0:{port}")
-        print(f"[Bridge] Waiting for bore tunnel URL...")
-        print(f"[Bridge] Press Ctrl+C to stop\n")
-        await asyncio.Future()  # Run forever
+    async with websockets.serve(handle, "0.0.0.0", port):
+        print(f"[WS] ws://0.0.0.0:{port}  ✅\n")
+        await asyncio.Future()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Jarvis iOS WebSocket Bridge")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    args = parser.parse_args()
-
+    p = argparse.ArgumentParser()
+    p.add_argument("--port", type=int, default=PORT)
+    args = p.parse_args()
     try:
         asyncio.run(main(args.port))
     except KeyboardInterrupt:
-        print("\n[Bridge] Stopped.")
+        print("\nStopped.")
