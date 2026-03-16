@@ -24,8 +24,8 @@ export const JARVIS_VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'pNInz6obpgDQGcFma
 // Tailscale IP твоего сервера: 100.70.68.84
 // Используй Tailscale — работает везде без открытых портов!
 
-export const BACKEND_URL_DEFAULT = 'ws://100.70.68.84:8766';
-export const BACKEND_URL_LOCAL   = 'ws://192.168.1.100:8766'; // обновить под свой IP
+export const BACKEND_URL_DEFAULT = 'ws://192.168.0.39:8766';
+export const BACKEND_URL_LOCAL   = 'ws://192.168.0.39:8766';
 
 // Текущий URL — читается из AsyncStorage (можно менять в настройках)
 const STORAGE_KEY_BACKEND = '@jarvis/backend_url';
@@ -65,7 +65,7 @@ export const BLE_DEVICE_NAME_FILTER = 'ray-ban';
 // ── Bridge URL ─────────────────────────────────────────────
 const STORAGE_KEY_BRIDGE = '@jarvis/bridge_url';
 
-export const BRIDGE_URL_DEFAULT = 'ws://100.70.68.84:8766';
+export const BRIDGE_URL_DEFAULT = 'ws://192.168.0.39:8766';
 
 export async function getBridgeUrl(): Promise<string> {
   try {
