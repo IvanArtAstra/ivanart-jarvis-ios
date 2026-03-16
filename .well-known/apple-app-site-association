@@ -1,0 +1,14 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "B5V5UQZB43.com.ivanart.jarvis",
+        "paths": ["*"]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["B5V5UQZB43.com.ivanart.jarvis"]
+  }
+}
