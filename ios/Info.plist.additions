@@ -4,6 +4,20 @@
   Добавить эти ключи в основной Info.plist после инициализации React Native проекта
 -->
 
+<!-- ===== Meta Wearables SDK (Ray-Ban) ===== -->
+<key>AppLinkURLScheme</key>
+<string>https://ivanartastra.github.io/ivanart-jarvis-ios</string>
+<key>MetaAppID</key>
+<string>1261497052067859</string>
+<key>ClientToken</key>
+<string>AR|1261497052067859|02adee6bcb50f0e9f0468b6708550e7d</string>
+<key>TeamID</key>
+<string>$(DEVELOPMENT_TEAM)</string>
+
+<!-- Камера (фото по голосовой команде) -->
+<key>NSCameraUsageDescription</key>
+<string>Jarvis может сделать фото по голосовой команде для анализа через AI-ассистент</string>
+
 <!-- Микрофон (голосовой ввод) -->
 <key>NSMicrophoneUsageDescription</key>
 <string>Jarvis слушает твои голосовые команды для управления через Ray-Ban очки</string>
