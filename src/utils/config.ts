@@ -60,3 +60,22 @@ export async function setVoiceId(id: string): Promise<void> {
 // BLE
 export const BLE_SCAN_TIMEOUT_MS    = 15000;
 export const BLE_DEVICE_NAME_FILTER = 'ray-ban';
+
+
+// ── Bridge URL ─────────────────────────────────────────────
+const STORAGE_KEY_BRIDGE = '@jarvis/bridge_url';
+
+export const BRIDGE_URL_DEFAULT = 'ws://100.70.68.84:8766';
+
+export async function getBridgeUrl(): Promise<string> {
+  try {
+    const saved = await AsyncStorage.getItem(STORAGE_KEY_BRIDGE);
+    return saved ?? BRIDGE_URL_DEFAULT;
+  } catch {
+    return BRIDGE_URL_DEFAULT;
+  }
+}
+
+export async function setBridgeUrl(url: string): Promise<void> {
+  await AsyncStorage.setItem(STORAGE_KEY_BRIDGE, url);
+}
