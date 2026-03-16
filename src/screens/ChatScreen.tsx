@@ -60,8 +60,8 @@ export const ChatScreen = () => {
       else if (data.state === 'idle') setIsThinking(false);
     };
 
-    agentBridgeService.onResponse(handleResponse);
-    agentBridgeService.onStateChange(handleState);
+    agentBridgeService.on('response', handleResponse);
+    agentBridgeService.on('state', handleState);
 
     return () => {
       agentBridgeService.off('response', handleResponse);
@@ -90,7 +90,7 @@ export const ChatScreen = () => {
     Keyboard.dismiss();
 
     if (isConnected) {
-      agentBridgeService.sendMessage(text);
+      agentBridgeService.send('chat', { text });
     } else {
       // Offline fallback message
       setTimeout(() => {
@@ -112,7 +112,6 @@ export const ChatScreen = () => {
       text: 'История очищена. Начнём заново!',
       timestamp: Date.now(),
     }]);
-    agentBridgeService.clearHistory();
   }, []);
 
   // ─── Render ───────────────────────────────────────────────

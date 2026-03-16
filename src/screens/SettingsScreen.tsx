@@ -45,7 +45,8 @@ export const SettingsScreen: React.FC<Props> = ({ onClose }) => {
     await setBridgeUrl(bridgeUrl);
     await setVoiceId(voiceId);
     // Reconnect bridge with new URL
-    await agentBridgeService.reconnect(bridgeUrl);
+    agentBridgeService.disconnect();
+    agentBridgeService.connect();
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
