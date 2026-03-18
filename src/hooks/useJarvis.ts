@@ -1,5 +1,8 @@
 /**
- * useJarvis v2 — с фоновым режимом и wake word
+ * useJarvis v3 — unified with glasses provider layer
+ *
+ * Replaces direct bleService calls with connectionManager.
+ * Supports BLE + SDK modes with auto-fallback.
  *
  * Режимы:
  * - MANUAL: нажал кнопку → говоришь
@@ -10,12 +13,12 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { voiceService } from '../services/voiceService';
 import { jarvisService } from '../services/jarvisService';
 import { ttsService } from '../services/ttsService';
-import { bleService } from '../services/bleService';
 import { wakeWordService } from '../services/wakeWordService';
 import { backgroundService } from '../services/backgroundService';
 import { notificationService } from '../services/notificationService';
 import { agentBridgeService } from '../services/agentBridgeService';
 import { commandParserService } from '../services/commandParserService';
+import { connectionManager, ConnectionStatus, MediaAsset } from '../services/glasses';
 
 export type AppState =
   | 'idle'          // ждём
@@ -23,6 +26,7 @@ export type AppState =
   | 'listening'     // активно слушаем запрос
   | 'thinking'      // Claude обрабатывает
   | 'speaking'      // Jarvis отвечает
+  | 'capturing'     // камера: снимает фото/видео
   | 'error';
 
 export type ListenMode = 'manual' | 'always_on';
@@ -32,11 +36,12 @@ interface JarvisState {
   listenMode: ListenMode;
   lastQuery: string;
   lastResponse: string;
-  partialText: string;        // текст в реальном времени при распознавании
+  partialText: string;
   isGlassesConnected: boolean;
-  isBridgeConnected: boolean; // подключён ли Agent Bridge
+  isBridgeConnected: boolean;
+  glassesProvider: 'ble' | 'sdk' | 'none';
   error: string | null;
-  sessionCount: number;       // сколько раз поговорили за сессию
+  sessionCount: number;
 }
 
 export const useJarvis = () => {
@@ -48,6 +53,7 @@ export const useJarvis = () => {
     partialText: '',
     isGlassesConnected: false,
     isBridgeConnected: false,
+    glassesProvider: 'none',
     error: null,
     sessionCount: 0,
   });
@@ -57,9 +63,183 @@ export const useJarvis = () => {
   const update = (patch: Partial<JarvisState>) =>
     setState(prev => ({ ...prev, ...patch }));
 
-  // ─────────────────────────────────────────────
-  // Основная обработка запроса (общая для обоих режимов)
-  // ─────────────────────────────────────────────
+  // ─── Initialize glasses provider ────────────────────────────
+  useEffect(() => {
+    connectionManager.initialize().then(() => {
+      const status = connectionManager.getStatus();
+      update({
+        isGlassesConnected: connectionManager.isConnected,
+        glassesProvider: status.activeProvider,
+      });
+    });
+
+    // Listen for status changes
+    connectionManager.onStatusChange((status: ConnectionStatus) => {
+      update({
+        isGlassesConnected: status.activeProvider !== 'none',
+        glassesProvider: status.activeProvider,
+      });
+    });
+
+    // Set up glasses event handlers
+    connectionManager.setEventHandlers({
+      onVoiceCommand: (commandId: string) => {
+        handleVoiceCommand(commandId);
+      },
+      onMessage: (text: string) => {
+        // BLE message from glasses → treat as user query
+        if (text.trim()) {
+          processQuery(text.trim());
+        }
+      },
+      onMediaCaptured: (asset: MediaAsset) => {
+        // Photo/video auto-captured → analyze with Vision
+        handleMediaCaptured(asset);
+      },
+      onGesture: (gesture) => {
+        // Tap → "что я вижу", double tap → "переведи"
+        if (gesture.type === 'tap') {
+          captureAndAnalyze();
+        } else if (gesture.type === 'double_tap') {
+          captureAndTranslate();
+        }
+      },
+    });
+  }, []);
+
+  // ─── Voice command handler (SDK) ────────────────────────────
+  const handleVoiceCommand = useCallback((commandId: string) => {
+    switch (commandId) {
+      case 'jarvis_listen':
+        startVoiceInteraction();
+        break;
+      case 'jarvis_photo':
+        captureAndAnalyze();
+        break;
+      case 'jarvis_translate':
+        captureAndTranslate();
+        break;
+      case 'jarvis_remember':
+        captureAndRemember();
+        break;
+      case 'jarvis_status':
+        processQuery('Джарвис, статус системы');
+        break;
+      case 'jarvis_tasks':
+        processQuery('Джарвис, сколько задач в очереди');
+        break;
+      case 'jarvis_stop':
+        stopListening();
+        break;
+    }
+  }, []);
+
+  // ─── Media capture handlers ─────────────────────────────────
+  const handleMediaCaptured = useCallback(async (asset: MediaAsset) => {
+    update({ appState: 'thinking' });
+    try {
+      // Upload to server and analyze with Vision AI
+      const { mediaUploader } = require('../services/media/MediaUploader');
+      const uploadResult = await mediaUploader.uploadMedia(asset);
+
+      if (uploadResult?.analysis) {
+        update({ lastResponse: uploadResult.analysis, appState: 'speaking' });
+        await sendResponseToGlasses(uploadResult.analysis);
+        await ttsService.speak(uploadResult.analysis);
+      }
+    } catch (e: any) {
+      update({ error: e.message, appState: 'error' });
+    }
+    update({ appState: state.listenMode === 'always_on' ? 'wake_listen' : 'idle' });
+  }, [state.listenMode]);
+
+  const captureAndAnalyze = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+
+    update({ appState: 'capturing' });
+    try {
+      const photo = await connectionManager.capturePhoto();
+      const { mediaUploader } = require('../services/media/MediaUploader');
+      const result = await mediaUploader.uploadAndAnalyze(photo, 'Опиши что ты видишь на этом фото. Ответь кратко, 2-3 предложения.');
+
+      update({ lastResponse: result, appState: 'speaking', lastQuery: '📷 Что я вижу?' });
+      await sendResponseToGlasses(result);
+      await ttsService.speak(result);
+    } catch (e: any) {
+      const msg = e.name === 'UnsupportedCapabilityError'
+        ? 'Камера доступна только через Meta SDK. Переключи режим в настройках.'
+        : `Ошибка камеры: ${e.message}`;
+      update({ error: msg, appState: 'error' });
+      await ttsService.speak(msg);
+    }
+    isProcessingRef.current = false;
+    update({ appState: state.listenMode === 'always_on' ? 'wake_listen' : 'idle' });
+  }, [state.listenMode]);
+
+  const captureAndTranslate = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+
+    update({ appState: 'capturing' });
+    try {
+      const photo = await connectionManager.capturePhoto();
+      const { mediaUploader } = require('../services/media/MediaUploader');
+      const result = await mediaUploader.uploadAndAnalyze(photo, 'Найди текст на фото и переведи его на русский. Если текст уже на русском — переведи на английский.');
+
+      update({ lastResponse: result, appState: 'speaking', lastQuery: '🌐 Переведи' });
+      await sendResponseToGlasses(result);
+      await ttsService.speak(result);
+    } catch (e: any) {
+      update({ error: e.message, appState: 'error' });
+    }
+    isProcessingRef.current = false;
+    update({ appState: state.listenMode === 'always_on' ? 'wake_listen' : 'idle' });
+  }, [state.listenMode]);
+
+  const captureAndRemember = useCallback(async () => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+
+    update({ appState: 'capturing' });
+    try {
+      const photo = await connectionManager.capturePhoto();
+      const { mediaUploader } = require('../services/media/MediaUploader');
+      const result = await mediaUploader.uploadAndAnalyze(photo, 'Опиши что на фото и сохрани это как заметку. Подтверди что запомнил.');
+
+      update({ lastResponse: result, appState: 'speaking', lastQuery: '💾 Запомни это' });
+      await sendResponseToGlasses(result);
+      await ttsService.speak(result);
+    } catch (e: any) {
+      update({ error: e.message, appState: 'error' });
+    }
+    isProcessingRef.current = false;
+    update({ appState: state.listenMode === 'always_on' ? 'wake_listen' : 'idle' });
+  }, [state.listenMode]);
+
+  // ─── Send response to glasses (unified) ─────────────────────
+  const sendResponseToGlasses = useCallback(async (text: string) => {
+    if (!connectionManager.isConnected) return;
+
+    try {
+      if (connectionManager.activeProvider === 'sdk') {
+        // SDK: show on display + TTS on glasses speakers
+        await connectionManager.showOnDisplay({
+          title: 'Jarvis',
+          body: text,
+          speakText: text,
+          ledPattern: 'notification',
+        });
+      } else {
+        // BLE: send as text
+        await connectionManager.sendText(text);
+      }
+    } catch (e) {
+      console.warn('[Jarvis] Send to glasses failed:', e);
+    }
+  }, []);
+
+  // ─── Main query processing ──────────────────────────────────
   const processQuery = useCallback(async (transcript: string) => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -67,17 +247,18 @@ export const useJarvis = () => {
     update({ lastQuery: transcript, appState: 'thinking', partialText: '' });
     notificationService.hapticResponse();
 
-    // 🔀 Роутинг: сначала проверяем агент-команды, потом Claude
+    // Set LED to thinking
+    try { await connectionManager.setLED('thinking'); } catch {}
+
+    // Route: agent commands first, then Claude
     let response: string;
     const agentCmd = agentBridgeService.connected
       ? await commandParserService.parse(transcript)
       : null;
 
     if (agentCmd?.response) {
-      // Команда агент-системы — мгновенный ответ без Claude
       response = agentCmd.response;
     } else {
-      // Обычный разговор — Claude API
       response = await jarvisService.ask(transcript);
     }
 
@@ -88,56 +269,43 @@ export const useJarvis = () => {
       error: null,
     });
 
-    // Отправить на очки если подключены
-    if (bleService.isConnected()) {
-      await notificationService.sendToGlasses(
-        { title: 'Jarvis', body: response },
-        bleService.sendToGlasses.bind(bleService)
-      );
-    }
+    // Send to glasses
+    await sendResponseToGlasses(response);
 
-    // Воспроизвести TTS
+    // Play TTS
     await ttsService.speak(response);
+
+    // Reset LED
+    try { await connectionManager.setLED('idle'); } catch {}
 
     isProcessingRef.current = false;
 
-    // Вернуться в нужный режим
     const nextState = state.listenMode === 'always_on' ? 'wake_listen' : 'idle';
     update({ appState: nextState });
 
-    // Если always_on — перезапустить прослушивание wake word
     if (state.listenMode === 'always_on') {
       startWakeWordListening();
     }
   }, [state.listenMode, state.sessionCount]);
 
-  // ─────────────────────────────────────────────
-  // Wake word активация
-  // ─────────────────────────────────────────────
+  // ─── Wake word ──────────────────────────────────────────────
   const handleWakeWordDetected = useCallback(async () => {
     if (isProcessingRef.current) return;
 
-    // Стоп-сигнал — вибрация на телефоне
     notificationService.hapticWakeWord();
-
-    // Пауза на wake word прослушивание
     await wakeWordService.stop();
 
-    // Запустить активное прослушивание запроса
     update({ appState: 'listening', partialText: '' });
 
     await voiceService.startListening(
       (transcript) => processQuery(transcript),
       (error) => {
         update({ error, appState: 'wake_listen' });
-        startWakeWordListening(); // перезапуск
+        startWakeWordListening();
       }
     );
   }, [processQuery]);
 
-  // ─────────────────────────────────────────────
-  // Запустить фоновое прослушивание wake word
-  // ─────────────────────────────────────────────
   const startWakeWordListening = useCallback(async () => {
     await wakeWordService.start(
       handleWakeWordDetected,
@@ -145,28 +313,22 @@ export const useJarvis = () => {
     );
   }, [handleWakeWordDetected]);
 
-  // ─────────────────────────────────────────────
-  // Переключение режимов
-  // ─────────────────────────────────────────────
+  // ─── Mode switching ─────────────────────────────────────────
   const setListenMode = useCallback(async (mode: ListenMode) => {
     update({ listenMode: mode });
 
     if (mode === 'always_on') {
-      // Включить keep-alive + wake word
       await backgroundService.startKeepAlive();
       await startWakeWordListening();
       update({ appState: 'wake_listen', lastResponse: 'Слушаю в фоне... Скажи "Джарвис"' });
     } else {
-      // Выключить фоновый режим
       await wakeWordService.stop();
       await backgroundService.stopKeepAlive();
       update({ appState: 'idle', lastResponse: 'Нажми кнопку и говори.' });
     }
   }, [startWakeWordListening]);
 
-  // ─────────────────────────────────────────────
-  // Ручной режим — кнопка
-  // ─────────────────────────────────────────────
+  // ─── Manual mode — button ───────────────────────────────────
   const startVoiceInteraction = useCallback(async () => {
     if (state.appState !== 'idle') return;
 
@@ -186,54 +348,52 @@ export const useJarvis = () => {
     update({ appState: 'idle' });
   }, []);
 
-  // ─────────────────────────────────────────────
-  // Ray-Ban подключение
-  // ─────────────────────────────────────────────
+  // ─── Glasses connection (via ConnectionManager) ─────────────
   const connectGlasses = useCallback(async (): Promise<boolean> => {
     try {
-      await bleService.scanForGlasses(async (device) => {
-        await bleService.connect(device.id);
+      const ok = await connectionManager.scanAndConnect();
+      if (ok) {
+        const status = connectionManager.getStatus();
+        const providerLabel = status.activeProvider === 'sdk' ? 'Meta SDK' : 'BLE';
         update({
           isGlassesConnected: true,
-          lastResponse: `Ray-Ban "${device.name}" подключены ✓ Ответы идут через очки.`,
+          glassesProvider: status.activeProvider,
+          lastResponse: `Ray-Ban подключены через ${providerLabel} ✓`,
         });
-      });
-      return true;
-    } catch {
-      update({ error: 'Очки не найдены. Убедись что они включены.' });
+      } else {
+        update({ error: 'Очки не найдены. Убедись что они включены.' });
+      }
+      return ok;
+    } catch (e: any) {
+      update({ error: e.message });
       return false;
     }
   }, []);
 
   const disconnectGlasses = useCallback(async () => {
-    await bleService.disconnect();
-    update({ isGlassesConnected: false });
+    await connectionManager.disconnect();
+    update({ isGlassesConnected: false, glassesProvider: 'none' });
   }, []);
 
-  // ─────────────────────────────────────────────
-  // Agent Bridge — подключение и пуш-уведомления
-  // ─────────────────────────────────────────────
+  // ─── Agent Bridge ───────────────────────────────────────────
   useEffect(() => {
-    // Подключить Bridge
     agentBridgeService.connect((connected) => {
       update({ isBridgeConnected: connected });
     });
 
-    // Пуш от агентов → голосом через очки
     agentBridgeService.onAgentResult(async (data) => {
       const preview = data.data?.preview ?? '';
       const file = (data.data?.file ?? '') as string;
       const agent = file.split('_')[0];
       const msg = `${agent} завершил задачу. ${preview.slice(0, 80)}`;
       notificationService.hapticResponse();
+      await sendResponseToGlasses(msg);
       await ttsService.speak(msg);
       update({ lastResponse: msg });
     });
   }, []);
 
-  // ─────────────────────────────────────────────
-  // Cleanup
-  // ─────────────────────────────────────────────
+  // ─── Cleanup ────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       voiceService.destroy();
@@ -241,6 +401,7 @@ export const useJarvis = () => {
       backgroundService.stopKeepAlive();
       ttsService.stop();
       agentBridgeService.disconnect();
+      // Don't destroy connectionManager — it's a singleton
     };
   }, []);
 
@@ -251,5 +412,8 @@ export const useJarvis = () => {
     setListenMode,
     connectGlasses,
     disconnectGlasses,
+    captureAndAnalyze,
+    captureAndTranslate,
+    captureAndRemember,
   };
 };
