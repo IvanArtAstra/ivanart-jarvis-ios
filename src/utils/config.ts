@@ -61,6 +61,26 @@ export async function setVoiceId(id: string): Promise<void> {
 export const BLE_SCAN_TIMEOUT_MS    = 15000;
 export const BLE_DEVICE_NAME_FILTER = 'ray-ban';
 
+// ── Connection Mode ────────────────────────────────────────
+// 'ble' | 'sdk' | 'auto'
+const STORAGE_KEY_CONNECTION_MODE = '@jarvis/connection_mode';
+
+export type ConnectionMode = 'ble' | 'sdk' | 'auto';
+
+export async function getConnectionMode(): Promise<ConnectionMode> {
+  try {
+    const saved = await AsyncStorage.getItem(STORAGE_KEY_CONNECTION_MODE);
+    if (saved && ['ble', 'sdk', 'auto'].includes(saved)) return saved as ConnectionMode;
+    return 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+
+export async function setConnectionMode(mode: ConnectionMode): Promise<void> {
+  await AsyncStorage.setItem(STORAGE_KEY_CONNECTION_MODE, mode);
+}
+
 
 // ── Bridge URL ─────────────────────────────────────────────
 const STORAGE_KEY_BRIDGE = '@jarvis/bridge_url';
