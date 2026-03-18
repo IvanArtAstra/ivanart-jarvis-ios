@@ -1,5 +1,5 @@
 /**
- * Config — API ключи и настройки
+ * Config — API ключи, серверные адреса, авто-определение сети
  * ⚠️ В продакшне использовать .env через react-native-dotenv
  */
 
@@ -14,22 +14,38 @@ export const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY ?? '';
 // Jarvis Voice ID (твой клонированный голос из CosyVoice или ElevenLabs)
 export const JARVIS_VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'pNInz6obpgDQGcFmaJgB';
 
-// ─── Backend URL — статический IP через bore.pub ─────────────────────────────
-//
-// Варианты подключения к Agent Bridge (порт 8766):
-// 1. Домашняя сеть:  http://192.168.X.X:8766
-// 2. bore.pub туннель (любая сеть): ws://<subdomain>.bore.pub:2200
-// 3. Tailscale VPN (безопаснее):    http://100.70.68.84:8766
-//
-// Tailscale IP твоего сервера: 100.70.68.84
-// Используй Tailscale — работает везде без открытых портов!
+// ─── Серверные IP-адреса ─────────────────────────────────────
 
-export const BACKEND_URL_DEFAULT = 'ws://192.168.0.39:8766';
-export const BACKEND_URL_LOCAL   = 'ws://192.168.0.39:8766';
+/** Tailscale VPN IP сервера */
+export const TAILSCALE_IP = '100.70.68.84';
 
-// Текущий URL — читается из AsyncStorage (можно менять в настройках)
-const STORAGE_KEY_BACKEND = '@jarvis/backend_url';
-const STORAGE_KEY_VOICE   = '@jarvis/voice_id';
+/** Локальный IP сервера в домашней сети */
+export const LOCAL_IP = '192.168.0.39';
+
+// ─── Порты сервисов ──────────────────────────────────────────
+
+/** Порты всех backend-сервисов */
+export const SERVER_PORTS = {
+  bridge: 8766,   // jarvis_ios_bridge.py — WebSocket
+  api: 8767,      // jarvis_api_server.py — REST API
+  media: 8768,    // jarvis_media_api.py — медиа-файлы
+  audio: 8769,    // audio streaming WebSocket
+  push: 8770,     // jarvis_push_server.py — push-уведомления
+} as const;
+
+export type ServicePort = keyof typeof SERVER_PORTS;
+
+// ─── Backend URL (legacy, для обратной совместимости) ─────────
+
+export const BACKEND_URL_DEFAULT = `ws://${LOCAL_IP}:${SERVER_PORTS.bridge}`;
+export const BACKEND_URL_LOCAL   = `ws://${LOCAL_IP}:${SERVER_PORTS.bridge}`;
+
+// ─── AsyncStorage ключи ──────────────────────────────────────
+
+const STORAGE_KEY_BACKEND    = '@jarvis/backend_url';
+const STORAGE_KEY_VOICE      = '@jarvis/voice_id';
+const STORAGE_KEY_SERVER_IP  = '@jarvis/server_ip';
+const STORAGE_KEY_AUTODETECT = '@jarvis/auto_detect';
 
 export async function getBackendUrl(): Promise<string> {
   try {
@@ -55,6 +71,36 @@ export async function getVoiceId(): Promise<string> {
 
 export async function setVoiceId(id: string): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY_VOICE, id);
+}
+
+// ─── Server IP (авто-определение или ручной выбор) ───────────
+
+export async function getServerIp(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(STORAGE_KEY_SERVER_IP);
+  } catch {
+    return null;
+  }
+}
+
+export async function setServerIp(ip: string): Promise<void> {
+  await AsyncStorage.setItem(STORAGE_KEY_SERVER_IP, ip);
+}
+
+// ─── Auto-Detection флаг ─────────────────────────────────────
+
+export async function getAutoDetect(): Promise<boolean> {
+  try {
+    const val = await AsyncStorage.getItem(STORAGE_KEY_AUTODETECT);
+    // По умолчанию включено
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export async function setAutoDetect(enabled: boolean): Promise<void> {
+  await AsyncStorage.setItem(STORAGE_KEY_AUTODETECT, enabled ? 'true' : 'false');
 }
 
 // BLE
@@ -98,4 +144,22 @@ export async function getBridgeUrl(): Promise<string> {
 
 export async function setBridgeUrl(url: string): Promise<void> {
   await AsyncStorage.setItem(STORAGE_KEY_BRIDGE, url);
+}
+
+// ── Audio Stream URL ───────────────────────────────────────
+const STORAGE_KEY_AUDIO_STREAM = '@jarvis/audio_stream_url';
+
+export const AUDIO_STREAM_URL_DEFAULT = 'ws://192.168.0.39:8769';
+
+export async function getAudioStreamUrl(): Promise<string> {
+  try {
+    const saved = await AsyncStorage.getItem(STORAGE_KEY_AUDIO_STREAM);
+    return saved ?? AUDIO_STREAM_URL_DEFAULT;
+  } catch {
+    return AUDIO_STREAM_URL_DEFAULT;
+  }
+}
+
+export async function setAudioStreamUrl(url: string): Promise<void> {
+  await AsyncStorage.setItem(STORAGE_KEY_AUDIO_STREAM, url);
 }
